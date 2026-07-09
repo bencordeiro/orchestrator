@@ -7,3 +7,8 @@ data/
 *.log
 .idea/
 .vscode/
+
+ui/node_modules/
+ui/dist/
+src-tauri/target/
+

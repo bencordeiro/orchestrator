@@ -28,8 +28,43 @@ pub struct SlotsFile {
     #[serde(default = "default_conversations_dir")]
     pub conversations_dir: String,
 
+    /// Named backend profiles for the GUI dropdown (optional; M1 configs omit this).
+    #[serde(default)]
+    pub backend_profiles: HashMap<String, BackendProfile>,
+
     /// Named slots. Key is the slot name (`worker`, `reviewer`, …).
     pub slots: HashMap<String, SlotConfig>,
+}
+
+/// A selectable backend definition shown in the GUI dropdown.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackendProfile {
+    /// Human label for the dropdown (may mention provider for the *user*;
+    /// never exposed via MCP `list_slots`).
+    pub label: String,
+    pub backend: BackendKind,
+    pub base_url: String,
+    pub model: String,
+    #[serde(default)]
+    pub auth_ref: Option<String>,
+}
+
+impl BackendProfile {
+    /// Apply this profile onto a slot's backend fields (keeps description / fallback).
+    pub fn apply_to_slot(&self, slot: &mut SlotConfig) {
+        slot.backend = self.backend;
+        slot.base_url = self.base_url.clone();
+        slot.model = self.model.clone();
+        slot.auth_ref = self.auth_ref.clone();
+    }
+
+    /// True if this profile matches a slot's current backend assignment.
+    pub fn matches_slot(&self, slot: &SlotConfig) -> bool {
+        self.backend == slot.backend
+            && self.base_url == slot.base_url
+            && self.model == slot.model
+            && self.auth_ref == slot.auth_ref
+    }
 }
 
 fn default_listen() -> String {
@@ -138,6 +173,23 @@ impl LoadedConfig {
     }
 }
 
+/// Persist a `SlotsFile` as pretty JSON (atomic best-effort via temp + rename).
+pub fn write_slots_file(path: &Path, file: &SlotsFile) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let raw = serde_json::to_string_pretty(file).map_err(|e| {
+        OrchestratorError::Config(format!("serialize slots.json: {e}"))
+    })?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, raw.as_bytes())?;
+    fs::rename(&tmp, path).or_else(|_| {
+        // Windows: rename over existing can fail if target exists — write directly.
+        fs::write(path, raw.as_bytes())
+    })?;
+    Ok(())
+}
+
 /// Write a default example config next to `path` if it does not exist.
 pub fn write_example_if_missing(path: &Path) -> Result<()> {
     if path.exists() {
@@ -150,6 +202,15 @@ pub fn write_example_if_missing(path: &Path) -> Result<()> {
   "listen": "127.0.0.1:7420",
   "bearer_token_ref": "mcp_bearer_token",
   "conversations_dir": "data/conversations",
+  "backend_profiles": {
+    "local-qwen": {
+      "label": "Local Qwen (10.0.0.10)",
+      "backend": "openai_compatible",
+      "base_url": "http://10.0.0.10:8000/v1",
+      "model": "qwen35b",
+      "auth_ref": "worker_api_key"
+    }
+  },
   "slots": {
     "worker": {
       "description": "General-purpose coding and reasoning worker",

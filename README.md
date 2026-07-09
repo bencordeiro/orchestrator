@@ -1,94 +1,83 @@
-# Orchestrator (M1 — headless core)
+# Orchestrator
 
-Slot-based model delegation MCP server. Main agents (Claude Code, Codex) call a stable `delegate` tool; you hot-swap the worker backend behind a named **slot** without restarting the MCP session.
+Slot-based model delegation: main agents (Claude Code, Codex) call a stable MCP `delegate` tool; you hot-swap the worker backend behind a named **slot** from a tray-resident GUI without restarting the MCP session.
 
-## What M1 includes
+## Status
 
-- Standalone Rust crate: library + thin `orchestrator` binary (`cargo run`)
-- MCP over **streamable HTTP** on localhost (`rmcp`), protected by a **bearer token**
-- Tools:
-  - `delegate(task, slot?, conversation_id?, context?, files?)` — default slot `worker`
-  - `list_slots()` — names + capability descriptions only (never vendor/model)
-- `slots.json` registry: slot → `{ backend, base_url, model, auth_ref, fallback }`
-- Secrets in the **OS keychain** (`keyring`) — never plaintext in config
-- Slot resolved **at call time** every `delegate` (hot-reload via mtime) — proven by tests
-- Backends: OpenAI-compatible chat-completions (streaming) + native Anthropic
-- Conversation history stored orchestrator-side on disk (survives slot swap mid-thread)
-- No automatic slot switching; errors return `worker unavailable: <reason>`
+| Milestone | Status |
+|-----------|--------|
+| **M1** Headless MCP core | Complete (audited) |
+| **M2** Tauri GUI | Complete |
+| M3 CLIProxyAPI | Not started |
+| M4 Resilience / Ollama discovery | Not started |
+| M5 Packaging | Not started |
 
-## Quick start
+## Architecture
+
+- **Library** (`orchestrator` crate): slot registry, backends, conversations, MCP tools
+- **Headless binary**: `cargo run -- serve` (M1)
+- **Desktop app** (`src-tauri` + `ui/`): Tauri 2 + React/TS embeds the same library; MCP runs inside the process
+
+## M1 — Headless core
 
 ```powershell
-# Build
-cargo build
-
-# Secrets (OS keychain)
 cargo run -- secrets set mcp_bearer_token "dev-token-change-me"
 cargo run -- secrets set worker_api_key "YOUR_API_KEY"
-
-# Or env overrides for first run:
-#   $env:ORCHESTRATOR_BEARER_TOKEN = "dev-token-change-me"
-#   $env:ORCHESTRATOR_WORKER_API_KEY = "YOUR_API_KEY"
-
-# Serve
 cargo run -- serve slots.json
 ```
 
-Register with Claude Code:
-
-```powershell
-claude mcp add --transport http orchestrator http://127.0.0.1:7420/mcp `
-  --header "Authorization: Bearer dev-token-change-me"
-```
-
-## Config (`slots.json`)
-
-```json
-{
-  "listen": "127.0.0.1:7420",
-  "bearer_token_ref": "mcp_bearer_token",
-  "conversations_dir": "data/conversations",
-  "slots": {
-    "worker": {
-      "description": "General-purpose coding and reasoning worker",
-      "backend": "openai_compatible",
-      "base_url": "http://10.0.0.10:8000/v1",
-      "model": "qwen35b",
-      "auth_ref": "worker_api_key",
-      "enable_fallback": false
-    }
-  }
-}
-```
-
-Edit `base_url` / `model` / `backend` and save — the **next** `delegate` call uses the new backend. No restart.
-
-## Tests
+Tools: `delegate`, `list_slots` (opaque). Config: `slots.json`. Secrets: OS keychain. Slot resolved **at call time**.
 
 ```powershell
 cargo test
 ```
 
-Critical coverage:
+## M2 — Tauri GUI
 
-- `tests/hot_swap.rs` — hot-swap takes effect on the next `delegate`
-- `tests/conversation_continuity.rs` — history replay + continuity after mid-thread slot swap
+### Features
+
+- Slot board: cards with name, description, assigned backend, last call / latency / error
+- Add/remove slots; swap backend via dropdown (writes `slots.json` then **`force_reload()`**)
+- Backend profiles for the dropdown
+- System tray: show / hide / quit (close window hides to tray)
+- Start on login (`tauri-plugin-autostart`)
+- **Copy MCP setup command** (includes bearer token)
+
+### Run (dev)
+
+```powershell
+# From repo root — ensures slots.json is found
+$env:ORCHESTRATOR_SLOTS = "$PWD\slots.json"
+$env:ORCHESTRATOR_BEARER_TOKEN = "dev-token-change-me"   # optional if keychain set
+
+cd ui
+npm install
+npm run tauri dev
+```
+
+Or build + run:
+
+```powershell
+cd ui ; npm run build ; cd ..
+cd src-tauri ; cargo build
+# from repo root:
+.\src-tauri\target\debug\orchestrator-app.exe
+```
+
+### GUI mutation contract
+
+Every slot/profile change goes through `SlotRegistry::mutate` / `assign_backend` / `upsert_*`, which **write the config file and call `force_reload()`**. The next `delegate` uses the new backend without restart and without waiting on filesystem mtime.
+
+## Config sketch
+
+See `slots.example.json`. Optional `backend_profiles` feed the GUI dropdown; each slot still stores full backend fields (M1-compatible).
 
 ## Layout
 
 ```
-src/
-  lib.rs           # library surface
-  main.rs          # thin CLI (serve / secrets / init)
-  config.rs        # slots.json schema + mtime reload
-  registry.rs      # call-time slot resolve
-  secrets.rs       # keyring + in-memory store for tests
-  conversation.rs  # disk-persisted threads
-  core.rs          # delegate / list_slots
-  backends/        # openai_compatible + anthropic
-  mcp/             # streamable HTTP + bearer auth
+src/                 # M1 library + headless binary
+src-tauri/           # Tauri 2 host (embeds library, tray, commands)
+ui/                  # React + TypeScript + Vite frontend
+tests/               # integration tests (hot-swap, continuity, GUI mutate path)
+slots.example.json
 ```
-
-## Out of scope for M1
-
-Tauri GUI (M2), CLIProxyAPI sidecar (M3), tray notifications (M4), packaging (M5).

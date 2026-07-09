@@ -1,0 +1,29 @@
+[package]
+name = "orchestrator-app"
+version = "0.1.0"
+description = "Orchestrator desktop GUI (Tauri 2) — embeds M1 MCP core"
+authors = ["Ben"]
+edition = "2021"
+
+[lib]
+name = "orchestrator_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+orchestrator = { path = ".." }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "6"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

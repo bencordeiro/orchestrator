@@ -205,6 +205,16 @@ pub async fn serve(state: McpState, listen: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Bind and serve forever (used by the Tauri host process).
+pub async fn serve_forever(state: McpState, listen: &str) -> anyhow::Result<()> {
+    let addr: SocketAddr = listen.parse()?;
+    let app = build_router(state);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!("orchestrator MCP listening on http://{addr}/mcp");
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
 /// Load the MCP bearer token from the secret store (required).
 pub fn load_bearer_token(
     secrets: &dyn SecretStore,

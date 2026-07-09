@@ -69,15 +69,47 @@ impl ConversationStore {
         Ok(conv)
     }
 
-    /// Create a brand-new conversation and persist it.
-    pub fn create(&self) -> Result<Conversation> {
+    /// Allocate a new conversation id **without** writing to disk.
+    ///
+    /// Used for fresh `delegate` jobs so a failed backend call does not leave
+    /// an orphan empty conversation file.
+    pub fn allocate_id() -> String {
+        Uuid::new_v4().to_string()
+    }
+
+    /// Build an in-memory conversation shell (not persisted).
+    pub fn new_empty() -> Conversation {
         let now = Utc::now();
-        let conv = Conversation {
-            id: Uuid::new_v4().to_string(),
+        Conversation {
+            id: Self::allocate_id(),
             created_at: now,
             updated_at: now,
             last_slot: None,
             messages: Vec::new(),
+        }
+    }
+
+    /// Create a brand-new conversation and persist it.
+    pub fn create(&self) -> Result<Conversation> {
+        let conv = Self::new_empty();
+        self.save(&conv)?;
+        Ok(conv)
+    }
+
+    /// Persist a brand-new conversation with initial messages (fresh successful job).
+    pub fn create_with_messages(
+        &self,
+        id: &str,
+        messages: &[ChatMessage],
+        last_slot: Option<&str>,
+    ) -> Result<Conversation> {
+        let now = Utc::now();
+        let conv = Conversation {
+            id: id.to_string(),
+            created_at: now,
+            updated_at: now,
+            last_slot: last_slot.map(|s| s.to_string()),
+            messages: messages.to_vec(),
         };
         self.save(&conv)?;
         Ok(conv)
@@ -98,6 +130,11 @@ impl ConversationStore {
         }
         self.save(&conv)?;
         Ok(conv)
+    }
+
+    /// True if a conversation file exists for `id`.
+    pub fn exists(&self, id: &str) -> bool {
+        self.path_for(id).exists()
     }
 
     /// Replace the full message list (used by tests / repair).
