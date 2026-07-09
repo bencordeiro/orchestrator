@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+.DS_Store
+.env
+slots.json
+data/
+*.log
+.idea/
+.vscode/
