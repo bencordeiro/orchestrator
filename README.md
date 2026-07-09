@@ -7,8 +7,8 @@ Slot-based model delegation: main agents (Claude Code, Codex) call a stable MCP 
 | Milestone | Status |
 |-----------|--------|
 | **M1** Headless MCP core | Complete (audited) |
-| **M2** Tauri GUI | Complete |
-| M3 CLIProxyAPI | Not started |
+| **M2** Tauri GUI | Complete (audited) |
+| **M3** CLIProxyAPI subscriptions | Complete |
 | M4 Resilience / Ollama discovery | Not started |
 | M5 Packaging | Not started |
 
@@ -67,6 +67,22 @@ cd src-tauri ; cargo build
 ### GUI mutation contract
 
 Every slot/profile change goes through `SlotRegistry::mutate` / `assign_backend` / `upsert_*`, which **write the config file and call `force_reload()`**. The next `delegate` uses the new backend without restart and without waiting on filesystem mtime.
+
+## M3 — CLIProxyAPI (subscription OAuth)
+
+Pinned release: **v7.2.58** (see `src-tauri/binaries/VERSION.txt`). Windows x64 binary only for now; Linux/Mac download URLs are noted in that file.
+
+```powershell
+# One-time: download sidecar (not vendored in git — ~47MB)
+powershell -File scripts\download-cliproxy.ps1
+```
+
+- Sidecar lifecycle in `src-tauri/src/sidecar/` (spawn / health / restart backoff / kill on exit)
+- Config + auth under `%AppData%\orchestrator\cliproxy\` (not `~/.cli-proxy-api`)
+- Listen: `127.0.0.1:18317` (avoids clashing with a system CLIProxyAPI on 8317)
+- GUI **Accounts**: enable sidecar, OAuth connect (claude/codex/antigravity/kimi/xai), disconnect, sync profiles
+- Connected accounts become ordinary `sub-…` **openai_compatible** backend profiles → slot dropdown. Core never imports CLIProxyAPI types.
+- Failures (sidecar down, auth, quota) → `worker unavailable: …` via existing adapter mapping
 
 ## Config sketch
 

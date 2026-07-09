@@ -1,0 +1,10 @@
+﻿# CLIProxyAPI sidecar pin
+version=7.2.58
+source=https://github.com/router-for-me/CLIProxyAPI/releases/tag/v7.2.58
+windows_amd64=https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.58/CLIProxyAPI_7.2.58_windows_amd64.zip
+# Future (not bundled in this tree yet):
+# linux_amd64=.../CLIProxyAPI_7.2.58_linux_amd64.tar.gz
+# darwin_amd64=.../CLIProxyAPI_7.2.58_darwin_amd64.tar.gz
+# darwin_aarch64=.../CLIProxyAPI_7.2.58_darwin_aarch64.tar.gz
+sha256_windows_zip=e45be3e1743a530d01c1b9bf97e282e00bf23c7d4ba734cd9ef1b04e66936ff1
+binary_name=cli-proxy-api.exe

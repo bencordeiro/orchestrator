@@ -1,6 +1,7 @@
-//! Tauri application library: hosts MCP server + slot board GUI.
+//! Tauri application library: hosts MCP server + slot board GUI + CLIProxyAPI sidecar.
 
 mod commands;
+mod sidecar;
 mod state;
 
 use std::sync::Arc;
@@ -57,6 +58,13 @@ pub fn run() {
             commands::remove_backend_profile,
             commands::get_mcp_setup_command,
             commands::set_secret,
+            commands::get_sidecar_status,
+            commands::set_sidecar_enabled,
+            commands::list_subscription_accounts,
+            commands::start_subscription_oauth,
+            commands::disconnect_subscription_account,
+            commands::sync_subscription_profiles,
+            commands::list_oauth_providers,
         ])
         .setup(|app| {
             setup_tray(app.handle())?;
@@ -73,8 +81,20 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let RunEvent::ExitRequested { api, .. } = event {
-                // Allow explicit quit from tray.
-                let _ = app_handle;
+                // Clean shutdown of CLIProxyAPI sidecar.
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    let sidecar = state.sidecar.clone();
+                    // Best-effort blocking kill; runtime may already be shutting down.
+                    let _ = std::thread::spawn(move || {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build();
+                        if let Ok(rt) = rt {
+                            let _ = rt.block_on(sidecar.stop());
+                        }
+                    })
+                    .join();
+                }
                 let _ = api;
             }
         });

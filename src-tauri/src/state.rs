@@ -1,4 +1,4 @@
-//! Shared Tauri application state hosting the M1 orchestrator + MCP server.
+//! Shared Tauri application state hosting the M1 orchestrator + MCP server + sidecar.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,6 +10,9 @@ use orchestrator::{
     SlotRegistry,
 };
 use tokio::sync::Mutex;
+use uuid::Uuid;
+
+use crate::sidecar::{CliproxySettings, SidecarManager, SidecarPaths};
 
 /// Process-wide app state shared with Tauri commands.
 pub struct AppState {
@@ -19,6 +22,7 @@ pub struct AppState {
     pub config_path: PathBuf,
     /// MCP server join handle (kept so the task is not dropped).
     pub _mcp_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    pub sidecar: Arc<SidecarManager>,
 }
 
 impl AppState {
@@ -42,7 +46,7 @@ impl AppState {
                     t
                 } else {
                     // First-run convenience: generate and store a token.
-                    let generated = uuid_like_token();
+                    let generated = Uuid::new_v4().to_string();
                     secrets.set(&bearer_ref, &generated)?;
                     tracing::info!("generated and stored MCP bearer token in keychain");
                     generated
@@ -58,7 +62,7 @@ impl AppState {
 
         let registry = Arc::new(SlotRegistry::open(&config_path)?);
         let conversations = Arc::new(ConversationStore::new(conv_dir)?);
-        let orchestrator = Orchestrator::new(registry, conversations, secrets);
+        let orchestrator = Orchestrator::new(registry.clone(), conversations, secrets);
 
         let mcp_state = McpState {
             orchestrator: orchestrator.clone(),
@@ -72,23 +76,33 @@ impl AppState {
             }
         });
 
+        // CLIProxyAPI sidecar (optional until enabled / subscriptions exist).
+        let paths = SidecarPaths::resolve(&config_path)?;
+        paths.ensure_dirs()?;
+        let settings = paths.load_or_init_settings().unwrap_or_else(|_| {
+            let s = CliproxySettings::generate_fresh();
+            let _ = paths.save_settings(&s);
+            s
+        });
+        let _ = paths.write_proxy_config(&settings);
+        let sidecar = Arc::new(SidecarManager::new(paths, settings, registry));
+        if let Err(e) = sidecar.maybe_autostart().await {
+            tracing::warn!("CLIProxyAPI autostart skipped: {e:#}");
+        }
+        sidecar.spawn_supervisor_loop();
+        if let Err(e) = sidecar.sync_profiles().await {
+            tracing::debug!("subscription profile sync: {e:#}");
+        }
+
         Ok(Self {
             orchestrator,
             bearer_token: Arc::new(bearer),
             listen,
             config_path,
             _mcp_handle: Mutex::new(Some(handle)),
+            sidecar,
         })
     }
-}
-
-fn uuid_like_token() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("orch-{nanos:x}")
 }
 
 /// Resolve default slots.json path (next to exe, or cwd, or config dir).

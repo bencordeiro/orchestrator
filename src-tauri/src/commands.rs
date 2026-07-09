@@ -204,3 +204,76 @@ pub fn set_secret(name: String, value: String) -> Result<(), String> {
     use orchestrator::{KeyringSecretStore, SecretStore};
     KeyringSecretStore.set(&name, &value).map_err(map_err)
 }
+
+// ── CLIProxyAPI / subscription accounts (M3) ─────────────────────────────
+
+#[tauri::command]
+pub async fn get_sidecar_status(
+    state: State<'_, AppState>,
+) -> Result<crate::sidecar::SidecarStatus, String> {
+    Ok(state.sidecar.status_snapshot().await)
+}
+
+#[tauri::command]
+pub async fn set_sidecar_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    state.sidecar.set_enabled(enabled).await.map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn list_subscription_accounts(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::sidecar::AuthAccount>, String> {
+    // If not running, return empty with no hard error — GUI shows status separately.
+    match state.sidecar.client().await.list_auth_files().await {
+        Ok(a) => Ok(a),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("not running")
+                || msg.contains("connection")
+                || msg.contains("timed out")
+                || msg.contains("error sending")
+            {
+                Ok(vec![])
+            } else {
+                Err(msg)
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn start_subscription_oauth(
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<(), String> {
+    state
+        .sidecar
+        .start_oauth(&provider)
+        .await
+        .map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn disconnect_subscription_account(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), String> {
+    state
+        .sidecar
+        .disconnect_account(&name)
+        .await
+        .map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn sync_subscription_profiles(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.sidecar.sync_profiles().await.map_err(map_err)
+}
+
+#[tauri::command]
+pub fn list_oauth_providers() -> Vec<String> {
+    crate::sidecar::OAUTH_PROVIDERS
+        .iter()
+        .map(|(n, _)| (*n).to_string())
+        .collect()
+}

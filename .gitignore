@@ -12,3 +12,15 @@ ui/node_modules/
 ui/dist/
 src-tauri/target/
 
+
+# CLIProxyAPI download cache (keep VERSION.txt + optional committed exe policy)
+src-tauri/binaries/extract/
+src-tauri/binaries/*.zip
+src-tauri/binaries/test-cfg/
+
+
+src-tauri/binaries/*.exe
+src-tauri/binaries/*.zip
+src-tauri/binaries/extract/
+src-tauri/binaries/test-cfg/
+

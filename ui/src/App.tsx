@@ -38,6 +38,32 @@ type ServerInfo = {
   config_path: string
 }
 
+type SidecarStatus = {
+  enabled: boolean
+  running: boolean
+  healthy: boolean
+  version_pin: string
+  base_url: string
+  openai_base_url: string
+  port: number
+  binary_path: string
+  config_path: string
+  last_error: string | null
+  restart_count: number
+}
+
+type AuthAccount = {
+  id: string
+  name: string
+  provider: string
+  email: string | null
+  label: string | null
+  status: string
+  status_message: string
+  unavailable: boolean
+  disabled: boolean
+}
+
 function App() {
   const [slots, setSlots] = useState<SlotBoardItem[]>([])
   const [profiles, setProfiles] = useState<BackendProfileView[]>([])
@@ -59,19 +85,29 @@ function App() {
   const [profUrl, setProfUrl] = useState('')
   const [profModel, setProfModel] = useState('')
   const [profAuth, setProfAuth] = useState('')
+  const [sidecar, setSidecar] = useState<SidecarStatus | null>(null)
+  const [accounts, setAccounts] = useState<AuthAccount[]>([])
+  const [oauthProviders, setOauthProviders] = useState<string[]>([])
+  const [oauthProvider, setOauthProvider] = useState('claude')
 
   const refresh = useCallback(async () => {
     try {
-      const [board, pro, info, cmd] = await Promise.all([
+      const [board, pro, info, cmd, sc, acc, prov] = await Promise.all([
         invoke<SlotBoardItem[]>('get_slot_board'),
         invoke<BackendProfileView[]>('get_backend_profiles'),
         invoke<ServerInfo>('get_server_info'),
         invoke<string>('get_mcp_setup_command'),
+        invoke<SidecarStatus>('get_sidecar_status'),
+        invoke<AuthAccount[]>('list_subscription_accounts'),
+        invoke<string[]>('list_oauth_providers'),
       ])
       setSlots(board)
       setProfiles(pro)
       setServer(info)
       setMcpCmd(cmd)
+      setSidecar(sc)
+      setAccounts(acc)
+      setOauthProviders(prov)
       setError(null)
       if (pro.length && !newProfile) {
         setNewProfile(pro[0].id)
@@ -173,6 +209,54 @@ function App() {
     }
   }
 
+  async function toggleSidecar() {
+    if (!sidecar) return
+    try {
+      await invoke('set_sidecar_enabled', { enabled: !sidecar.enabled })
+      setStatusMsg(
+        !sidecar.enabled
+          ? 'CLIProxyAPI sidecar enabled — starting…'
+          : 'CLIProxyAPI sidecar disabled',
+      )
+      await refresh()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  async function connectOAuth() {
+    try {
+      await invoke('start_subscription_oauth', { provider: oauthProvider })
+      setStatusMsg(
+        `OAuth flow started for ${oauthProvider} (browser should open). Click Refresh accounts after login.`,
+      )
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  async function disconnectAccount(name: string) {
+    if (!confirm(`Disconnect account ${name}?`)) return
+    try {
+      await invoke('disconnect_subscription_account', { name })
+      await invoke('sync_subscription_profiles')
+      setStatusMsg(`Disconnected ${name}`)
+      await refresh()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  async function syncProfiles() {
+    try {
+      const ids = await invoke<string[]>('sync_subscription_profiles')
+      setStatusMsg(`Synced ${ids.length} subscription profile(s) into backend dropdown`)
+      await refresh()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
   function formatTime(iso: string | null) {
     if (!iso) return '—'
     try {
@@ -232,6 +316,94 @@ function App() {
           <label>Claude Code setup</label>
           <textarea readOnly rows={3} value={mcpCmd} />
         </div>
+      </section>
+
+      <section className="panel">
+        <h2>Accounts (CLIProxyAPI subscriptions)</h2>
+        {sidecar && (
+          <div className="sidecar-meta">
+            <label className="check">
+              <input type="checkbox" checked={sidecar.enabled} onChange={toggleSidecar} />
+              Run subscription sidecar (CLIProxyAPI {sidecar.version_pin})
+            </label>
+            <dl className="kv">
+              <dt>Status</dt>
+              <dd>
+                {sidecar.healthy ? (
+                  <span className="ok-text">healthy</span>
+                ) : sidecar.running ? (
+                  <span className="err-text">running, not healthy</span>
+                ) : sidecar.enabled ? (
+                  <span className="err-text">not running</span>
+                ) : (
+                  'disabled'
+                )}
+                {sidecar.restart_count > 0 && ` · restarts: ${sidecar.restart_count}`}
+              </dd>
+              <dt>OpenAI URL</dt>
+              <dd>
+                <code>{sidecar.openai_base_url}</code>
+              </dd>
+              <dt>Config</dt>
+              <dd>
+                <code>{sidecar.config_path}</code>
+              </dd>
+            </dl>
+            {sidecar.last_error && <pre className="err-box">{sidecar.last_error}</pre>}
+          </div>
+        )}
+        <div className="oauth-row">
+          <label className="field">
+            Provider
+            <select value={oauthProvider} onChange={(e) => setOauthProvider(e.target.value)}>
+              {(oauthProviders.length ? oauthProviders : ['claude', 'codex', 'antigravity', 'kimi', 'xai']).map(
+                (p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+          <button type="button" className="btn" onClick={connectOAuth}>
+            Connect subscription (OAuth)
+          </button>
+          <button type="button" className="btn secondary" onClick={syncProfiles}>
+            Sync profiles to dropdown
+          </button>
+        </div>
+        <ul className="profile-list">
+          {accounts.map((a) => (
+            <li key={a.id}>
+              <div className="card-head">
+                <strong>
+                  {a.provider} · {a.email ?? a.label ?? a.name}
+                </strong>
+                <button type="button" className="btn danger sm" onClick={() => disconnectAccount(a.name)}>
+                  Disconnect
+                </button>
+              </div>
+              <div className="meta">
+                status:{' '}
+                <span className={a.unavailable || a.status !== 'active' ? 'err-text' : 'ok-text'}>
+                  {a.status}
+                  {a.unavailable ? ' (unavailable)' : ''}
+                </span>
+                {a.status_message ? ` — ${a.status_message}` : ''}
+                {a.disabled ? ' · disabled' : ''}
+              </div>
+            </li>
+          ))}
+          {accounts.length === 0 && (
+            <p className="empty">
+              No subscription accounts connected. Enable the sidecar and run OAuth, or sync after login.
+            </p>
+          )}
+        </ul>
+        <p className="meta">
+          Connected accounts auto-register as <code>sub-…</code> backend profiles (OpenAI-compatible → local
+          CLIProxyAPI). Slot/delegate path stays generic — no special-casing.
+        </p>
       </section>
 
       <section className="panel">
