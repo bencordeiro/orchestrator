@@ -1,26 +1,37 @@
 /target
+**/target/
 **/*.rs.bk
 .DS_Store
 .env
+.env.*
+!.env.example
 slots.json
 data/
 *.log
 .idea/
 .vscode/
+*.pdb
 
 ui/node_modules/
 ui/dist/
-src-tauri/target/
 
-
-# CLIProxyAPI download cache (keep VERSION.txt + optional committed exe policy)
+# CLIProxyAPI download cache (exe is staged for release by scripts/download-cliproxy.ps1;
+# do not commit the ~47MB binary — CI/release scripts download + checksum it)
 src-tauri/binaries/extract/
 src-tauri/binaries/*.zip
 src-tauri/binaries/test-cfg/
-
-
 src-tauri/binaries/*.exe
-src-tauri/binaries/*.zip
-src-tauri/binaries/extract/
-src-tauri/binaries/test-cfg/
+!src-tauri/binaries/VERSION.txt
 
+# Updater private key — NEVER commit
+*.key
+*.key.pub
+!docs/**/*.md
+.keys/
+.tauri/
+src-tauri/.tauri/
+
+# Local release artifacts
+dist-release/
+*.msi
+Orchestrator_*_x64-setup.exe

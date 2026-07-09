@@ -3,7 +3,7 @@
 use orchestrator::config::{BackendKind, BackendProfile, SlotConfig};
 use orchestrator::core::SlotBoardItem;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::state::AppState;
 
@@ -384,4 +384,87 @@ fn save_extra_hosts(path: &std::path::Path, hosts: &[String]) -> anyhow::Result<
     let raw = serde_json::to_string_pretty(hosts)?;
     std::fs::write(path, raw)?;
     Ok(())
+}
+
+// ── M5: manual update check (no background auto-update) ──────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckResult {
+    pub available: bool,
+    pub current_version: String,
+    pub latest_version: Option<String>,
+    pub body: Option<String>,
+    pub message: String,
+}
+
+/// Check GitHub Releases for an update. Does **not** download or install.
+/// User must confirm via `install_update` if available.
+#[tauri::command]
+pub async fn check_for_updates(
+    app: tauri::AppHandle,
+) -> Result<UpdateCheckResult, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let current = app.package_info().version.to_string();
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater unavailable: {e}"))?;
+
+    match updater.check().await {
+        Ok(Some(update)) => Ok(UpdateCheckResult {
+            available: true,
+            current_version: current,
+            latest_version: Some(update.version.clone()),
+            body: update.body.clone(),
+            message: format!(
+                "Update available: {} → {}",
+                app.package_info().version,
+                update.version
+            ),
+        }),
+        Ok(None) => Ok(UpdateCheckResult {
+            available: false,
+            current_version: current.clone(),
+            latest_version: None,
+            body: None,
+            message: format!("You are on the latest version ({current})"),
+        }),
+        Err(e) => {
+            // Common before GitHub publish: endpoint 404
+            Ok(UpdateCheckResult {
+                available: false,
+                current_version: current,
+                latest_version: None,
+                body: None,
+                message: format!(
+                    "Could not check for updates (is the GitHub release endpoint configured?): {e}"
+                ),
+            })
+        }
+    }
+}
+
+/// Download and install a pending update after the user confirmed in the GUI.
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater unavailable: {e}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "No update available".to_string())?;
+
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Relaunch after install (Windows NSIS/MSI updater flow).
+    // process plugin exposes restart via JS; from Rust use Tauri's helper:
+    tauri::process::restart(&app.env());
 }

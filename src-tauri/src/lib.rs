@@ -46,6 +46,8 @@ pub fn run() {
             Some(vec![]),
         ))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .manage(_rt_guard)
         .invoke_handler(tauri::generate_handler![
@@ -73,6 +75,8 @@ pub fn run() {
             commands::set_ollama_extra_hosts,
             commands::create_ollama_profile,
             commands::get_recent_usage,
+            commands::check_for_updates,
+            commands::install_update,
         ])
         .setup(|app| {
             setup_tray(app.handle())?;

@@ -153,37 +153,44 @@ debug: false
 }
 
 /// Locate the sidecar binary. Override with `ORCHESTRATOR_CLIPROXY_BIN`.
+///
+/// Production (Tauri `externalBin`): binary sits next to the app executable as
+/// `cli-proxy-api.exe` after the target-triple suffix is stripped at install time.
 pub fn resolve_binary_path() -> Result<PathBuf> {
     if let Ok(p) = std::env::var("ORCHESTRATOR_CLIPROXY_BIN") {
         return Ok(PathBuf::from(p));
     }
-    // Dev layout: src-tauri/binaries/cli-proxy-api.exe next to Cargo.toml
-    let candidates = [
-        PathBuf::from("src-tauri/binaries/cli-proxy-api.exe"),
-        PathBuf::from("binaries/cli-proxy-api.exe"),
-        // When cwd is src-tauri
-        PathBuf::from("binaries/cli-proxy-api.exe"),
-        // Next to the running executable
-        std::env::current_exe()
-            .ok()
-            .and_then(|e| e.parent().map(|p| p.join("cli-proxy-api.exe")))
-            .unwrap_or_default(),
-        std::env::current_exe()
-            .ok()
-            .and_then(|e| e.parent().map(|p| p.join("binaries").join("cli-proxy-api.exe")))
-            .unwrap_or_default(),
-    ];
+
+    let triple = "cli-proxy-api-x86_64-pc-windows-msvc.exe";
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            // Installed / release layout (externalBin)
+            candidates.push(dir.join("cli-proxy-api.exe"));
+            candidates.push(dir.join(triple));
+            candidates.push(dir.join("binaries").join("cli-proxy-api.exe"));
+            candidates.push(dir.join("binaries").join(triple));
+        }
+    }
+
+    // Dev layouts
+    candidates.push(PathBuf::from("src-tauri/binaries/cli-proxy-api.exe"));
+    candidates.push(PathBuf::from("src-tauri/binaries").join(triple));
+    candidates.push(PathBuf::from("binaries/cli-proxy-api.exe"));
+    candidates.push(PathBuf::from("binaries").join(triple));
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/cli-proxy-api.exe"),
+    );
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(triple));
+
     for c in candidates {
         if !c.as_os_str().is_empty() && c.exists() {
             return Ok(c.canonicalize().unwrap_or(c));
         }
     }
-    // Absolute path from this crate's known location during dev.
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/cli-proxy-api.exe");
-    if dev.exists() {
-        return Ok(dev);
-    }
-    Ok(dev) // return expected path even if missing (manager will report clear error)
+    // Expected path for error messages when missing.
+    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/cli-proxy-api.exe"))
 }
 
 #[cfg(test)]

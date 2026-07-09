@@ -312,6 +312,32 @@ function App() {
     }
   }
 
+  async function checkUpdates() {
+    try {
+      const r = await invoke<{
+        available: boolean
+        currentVersion: string
+        latestVersion?: string | null
+        message: string
+      }>('check_for_updates')
+      if (r.available) {
+        const ok = confirm(
+          `${r.message}\n\nDownload and install now? (manual update — no background auto-update)`,
+        )
+        if (ok) {
+          setStatusMsg('Downloading update…')
+          await invoke('install_update')
+        } else {
+          setStatusMsg(r.message)
+        }
+      } else {
+        setStatusMsg(r.message)
+      }
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
   async function saveFallback(slot: SlotBoardItem, enable: boolean, chain: string) {
     try {
       const fallback = chain
@@ -351,6 +377,9 @@ function App() {
         <div className="header-actions">
           <button type="button" className="btn secondary" onClick={() => refresh()}>
             Refresh
+          </button>
+          <button type="button" className="btn secondary" onClick={checkUpdates}>
+            Check for updates
           </button>
           <button type="button" className="btn" onClick={copyMcp}>
             Copy MCP setup command

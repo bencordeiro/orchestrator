@@ -142,23 +142,28 @@ fn ollama_hosts_path(slots_config: &std::path::Path) -> PathBuf {
     app_data_root(slots_config).join("ollama_hosts.json")
 }
 
-/// Resolve default slots.json path (next to exe, or cwd, or config dir).
+/// Resolve default slots.json path.
+///
+/// Installed apps should **not** write next to Program Files. Prefer:
+/// 1. `ORCHESTRATOR_SLOTS` env
+/// 2. Existing `./slots.json` (dev)
+/// 3. `%AppData%/orchestrator/slots.json` (first-launch auto-create)
 pub fn default_config_path() -> PathBuf {
     if let Ok(p) = std::env::var("ORCHESTRATOR_SLOTS") {
         return PathBuf::from(p);
     }
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let local = cwd.join("slots.json");
-    if local.exists() {
-        return local;
-    }
-    if let Some(cfg) = dirs::config_dir() {
-        let p = cfg.join("orchestrator").join("slots.json");
-        if p.exists() {
-            return p;
+    // Dev convenience: use cwd slots.json when present.
+    if let Ok(cwd) = std::env::current_dir() {
+        let local = cwd.join("slots.json");
+        if local.exists() {
+            return local;
         }
-        let _ = std::fs::create_dir_all(p.parent().unwrap());
-        return p;
     }
-    local
+    // Production / clean machine: always under the user config dir.
+    if let Some(cfg) = dirs::config_dir() {
+        let dir = cfg.join("orchestrator");
+        let _ = std::fs::create_dir_all(&dir);
+        return dir.join("slots.json");
+    }
+    PathBuf::from("slots.json")
 }

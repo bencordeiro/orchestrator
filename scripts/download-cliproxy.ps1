@@ -1,27 +1,58 @@
 # Download and extract the pinned CLIProxyAPI Windows x64 sidecar.
-# Pin is recorded in src-tauri/binaries/VERSION.txt
+# Pin + checksum: src-tauri/binaries/VERSION.txt
+# Also stages the Tauri externalBin name: cli-proxy-api-x86_64-pc-windows-msvc.exe
 $ErrorActionPreference = "Stop"
-$root = Split-Path (Split-Path $PSScriptRoot -Parent) -ErrorAction SilentlyContinue
-if (-not $root) { $root = "C:\Users\Ben\Desktop\Orchestrator" }
-# script is scripts/ under repo
 $repo = Split-Path $PSScriptRoot -Parent
 $binDir = Join-Path $repo "src-tauri\binaries"
 $versionFile = Join-Path $binDir "VERSION.txt"
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 
-$url = "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.58/CLIProxyAPI_7.2.58_windows_amd64.zip"
-$zip = Join-Path $binDir "CLIProxyAPI_7.2.58_windows_amd64.zip"
-$expected = "e45be3e1743a530d01c1b9bf97e282e00bf23c7d4ba734cd9ef1b04e66936ff1"
+if (-not (Test-Path $versionFile)) {
+  throw "Missing VERSION.txt at $versionFile"
+}
 
-Write-Host "Downloading $url"
-Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+$versionLines = Get-Content $versionFile
+$url = ($versionLines | Where-Object { $_ -match '^windows_amd64_url=(.+)$' } | ForEach-Object { $Matches[1] } | Select-Object -First 1)
+$expected = ($versionLines | Where-Object { $_ -match '^windows_amd64_sha256=(.+)$' } | ForEach-Object { $Matches[1] } | Select-Object -First 1)
+if (-not $url -or -not $expected) {
+  throw "VERSION.txt missing windows_amd64_url or windows_amd64_sha256"
+}
+$expected = $expected.ToLower()
+
+$zipName = Split-Path $url -Leaf
+$zip = Join-Path $binDir $zipName
+$destExe = Join-Path $binDir "cli-proxy-api.exe"
+$destTriple = Join-Path $binDir "cli-proxy-api-x86_64-pc-windows-msvc.exe"
+
+# Reuse existing verified zip if present
+if (Test-Path $zip) {
+  $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+  if ($hash -ne $expected) {
+    Write-Host "Existing zip hash mismatch; re-downloading..."
+    Remove-Item $zip -Force
+  }
+}
+
+if (-not (Test-Path $zip)) {
+  Write-Host "Downloading $url"
+  Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+}
+
 $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
 if ($hash -ne $expected) {
   throw "SHA256 mismatch: got $hash expected $expected"
 }
+Write-Host "Checksum OK: $hash"
+
 $extract = Join-Path $binDir "extract"
 if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
 Expand-Archive -Path $zip -DestinationPath $extract -Force
-Copy-Item (Join-Path $extract "cli-proxy-api.exe") (Join-Path $binDir "cli-proxy-api.exe") -Force
-Write-Host "Installed: $(Join-Path $binDir 'cli-proxy-api.exe')"
+$srcExe = Join-Path $extract "cli-proxy-api.exe"
+if (-not (Test-Path $srcExe)) {
+  throw "cli-proxy-api.exe not found inside zip"
+}
+Copy-Item $srcExe $destExe -Force
+Copy-Item $srcExe $destTriple -Force
+Write-Host "Installed: $destExe"
+Write-Host "Staged for Tauri externalBin: $destTriple"
 Write-Host "Pin: see $versionFile"

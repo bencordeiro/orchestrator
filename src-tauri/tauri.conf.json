@@ -2,11 +2,11 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Orchestrator",
   "version": "0.1.0",
-  "identifier": "com.orchestrator.app",
+  "identifier": "com.orchestrator.desktop",
   "build": {
-    "beforeDevCommand": "npm --prefix ../ui run dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm --prefix ../ui run build",
+    "beforeBuildCommand": "",
     "frontendDist": "../ui/dist"
   },
   "app": {
@@ -30,14 +30,39 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "externalBin": [
+      "binaries/cli-proxy-api"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    },
+    "longDescription": "Slot-based model delegation for MCP clients. Hot-swap worker backends without restarting your main agent session.",
+    "shortDescription": "Hot-swappable worker slots for Claude Code, Codex, and other MCP clients",
+    "category": "DeveloperTool",
+    "copyright": "Copyright (c) 2026 Ben Cordeiro",
+    "publisher": "Ben Cordeiro"
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJENjczRkYyMUNFMzQ3Q0EKUldUS1IrTWM4ajludlNndTNvZ2FCMzY1RnkyM0RNd3RXVHlkZy9FaHRqZm1TSFJVTS9DYjQyOUkK",
+      "endpoints": [
+        "https://github.com/YOUR_GITHUB_USER/orchestrator/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
 }

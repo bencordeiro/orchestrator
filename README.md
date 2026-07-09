@@ -1,106 +1,114 @@
 # Orchestrator
 
-Slot-based model delegation: main agents (Claude Code, Codex) call a stable MCP `delegate` tool; you hot-swap the worker backend behind a named **slot** from a tray-resident GUI without restarting the MCP session.
+**Hot-swappable worker slots for any MCP client** (Claude Code, Codex CLI, and friends).
 
-## Status
+Your main agent keeps one stable tool — `delegate` — while **you** decide which model/backend sits behind the `worker` (or `reviewer`, …) slot. Swap backends mid-session from a tray app **without** restarting MCP and **without** the main model needing to know the vendor.
 
-| Milestone | Status |
-|-----------|--------|
-| **M1** Headless MCP core | Complete (audited) |
-| **M2** Tauri GUI | Complete (audited) |
-| **M3** CLIProxyAPI subscriptions | Complete (audited) |
-| **M4** Resilience & local models | Complete |
-| M5 Packaging | Not started |
-
-## Architecture
-
-- **Library** (`orchestrator` crate): slot registry, backends, conversations, MCP tools
-- **Headless binary**: `cargo run -- serve` (M1)
-- **Desktop app** (`src-tauri` + `ui/`): Tauri 2 + React/TS embeds the same library; MCP runs inside the process
-
-## M1 — Headless core
-
-```powershell
-cargo run -- secrets set mcp_bearer_token "dev-token-change-me"
-cargo run -- secrets set worker_api_key "YOUR_API_KEY"
-cargo run -- serve slots.json
+```
+Claude Code / Codex  --MCP HTTP-->  Orchestrator (tray)  --OpenAI/Anthropic-->  worker backends
+                                         │
+                                    slots.json (hot reload)
+                                    Ollama · API keys · CLIProxyAPI subscriptions
 ```
 
-Tools: `delegate`, `list_slots` (opaque). Config: `slots.json`. Secrets: OS keychain. Slot resolved **at call time**.
+![Demo placeholder](docs/demo.gif)
+
+*Add a short screen recording as `docs/demo.gif` before public launch.*
+
+## Features
+
+- **MCP over streamable HTTP** on localhost (server outlives client sessions)
+- **Two tools only:** `delegate` and `list_slots` (list never reveals vendor/model)
+- **Call-time slot resolve** — edit config or GUI; next `delegate` uses the new backend
+- **Conversation continuity** — history lives in Orchestrator, so threads survive slot swaps
+- **Backends:** any OpenAI-compatible URL (Ollama, proxies, …) + native Anthropic
+- **Optional CLIProxyAPI sidecar** for subscription OAuth → local OpenAI-compatible API
+- **Tray app** (Windows): slot board, accounts, Ollama discovery, usage log, manual update check
+
+## Quick start (Windows)
+
+### Installer (release)
+
+1. Download the latest **NSIS** installer from [GitHub Releases](https://github.com/YOUR_GITHUB_USER/orchestrator/releases).
+2. Install and launch **Orchestrator** (tray icon appears; config + bearer token auto-created on first run).
+3. Connect a backend:
+   - **Ollama:** Local models → Discover → Create profile → assign to `worker`
+   - **API key:** add a backend profile + store the key via the secrets/keychain flow
+   - **Subscription:** Accounts → enable sidecar → OAuth (optional; see ToS risk below)
+4. Copy the MCP setup command from the UI, or run:
 
 ```powershell
+claude mcp add --transport http orchestrator http://localhost:7420/mcp `
+  --header "Authorization: Bearer <token-from-app>"
+```
+
+5. In Claude Code: ask it to `delegate` a task.
+
+### From source (dev)
+
+```powershell
+git clone https://github.com/YOUR_GITHUB_USER/orchestrator.git
+cd orchestrator
+powershell -File scripts\download-cliproxy.ps1   # optional, for subscription sidecar
+cd ui; npm install; cd ..
 cargo test
+# GUI:
+cd ui; npm run tauri dev
+# Headless MCP only:
+cargo run -- serve
 ```
 
-## M2 — Tauri GUI
-
-### Features
-
-- Slot board: cards with name, description, assigned backend, last call / latency / error
-- Add/remove slots; swap backend via dropdown (writes `slots.json` then **`force_reload()`**)
-- Backend profiles for the dropdown
-- System tray: show / hide / quit (close window hides to tray)
-- Start on login (`tauri-plugin-autostart`)
-- **Copy MCP setup command** (includes bearer token)
-
-### Run (dev)
+**One-command release build** (tests + UI + NSIS/MSI):
 
 ```powershell
-# From repo root — ensures slots.json is found
-$env:ORCHESTRATOR_SLOTS = "$PWD\slots.json"
-$env:ORCHESTRATOR_BEARER_TOKEN = "dev-token-change-me"   # optional if keychain set
-
-cd ui
-npm install
-npm run tauri dev
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1
 ```
 
-Or build + run:
+Installers land under `src-tauri\target\release\bundle\`.
 
-```powershell
-cd ui ; npm run build ; cd ..
-cd src-tauri ; cargo build
-# from repo root:
-.\src-tauri\target\debug\orchestrator-app.exe
-```
+## Slots & continuity
 
-### GUI mutation contract
+| Concept | Behavior |
+|---------|----------|
+| **Slot** | Stable name (`worker`, …) with a capability description |
+| **Backend** | Swappable: model + base URL + auth ref (or subscription profile) |
+| **Hot-swap** | GUI or `slots.json` edit → next `delegate` (no MCP restart) |
+| **Fresh job** | Omit `conversation_id` |
+| **Continued thread** | Pass prior `conversation_id`; history is replayed from disk |
+| **Opacity** | `list_slots` never exposes vendor/model — only name + description |
+| **Failures** | `worker unavailable: <reason>` — **no automatic** slot switching |
+| **Fallback** | Optional chain, **off by default**, explicit opt-in in the GUI |
 
-Every slot/profile change goes through `SlotRegistry::mutate` / `assign_backend` / `upsert_*`, which **write the config file and call `force_reload()`**. The next `delegate` uses the new backend without restart and without waiting on filesystem mtime.
+## Subscription ToS risk (read this)
 
-## M3 — CLIProxyAPI (subscription OAuth)
+Some backends can be wired through **subscription OAuth relays** (e.g. CLIProxyAPI). Providers have blocked or restricted third-party use of consumer subscriptions before.
 
-Pinned release: **v7.2.58** (see `src-tauri/binaries/VERSION.txt`). Windows x64 binary only for now; Linux/Mac download URLs are noted in that file.
+Orchestrator does **not** hide this:
 
-```powershell
-# One-time: download sidecar (not vendored in git — ~47MB)
-powershell -File scripts\download-cliproxy.ps1
-```
+- Subscription lanes are **fragile and user-controlled**.
+- Prefer **API keys** and **local models (Ollama)** when you need reliability or compliance.
+- You are responsible for complying with each provider’s terms of service.
 
-- Sidecar lifecycle in `src-tauri/src/sidecar/` (spawn / health / restart backoff / kill on exit)
-- Config + auth under `%AppData%\orchestrator\cliproxy\` (not `~/.cli-proxy-api`)
-- Listen: `127.0.0.1:18317` (avoids clashing with a system CLIProxyAPI on 8317)
-- GUI **Accounts**: enable sidecar, OAuth connect (claude/codex/antigravity/kimi/xai), disconnect, sync profiles
-- Connected accounts become ordinary `sub-…` **openai_compatible** backend profiles → slot dropdown. Core never imports CLIProxyAPI types.
-- Failures (sidecar down, auth, quota) → `worker unavailable: …` via existing adapter mapping
+## Security (summary)
 
-## Config sketch
+- Localhost MCP + bearer token  
+- Secrets in OS keychain  
+- See [SECURITY.md](SECURITY.md)
 
-See `slots.example.json`. Optional `backend_profiles` feed the GUI dropdown; each slot still stores full backend fields (M1-compatible).
+## Building & CI
 
-## Layout
+| Script | Purpose |
+|--------|---------|
+| `scripts/download-cliproxy.ps1` | Download pinned CLIProxyAPI (checksummed) for Windows x64 |
+| `scripts/release.ps1` | Full test + UI build + Tauri NSIS/MSI + optional `/health` smoke |
+| `.github/workflows/ci.yml` | Test on push; release artifacts on tag |
 
-```
-src/                 # M1 library + headless binary
-src-tauri/           # Tauri 2 host (embeds library, tray, commands)
-ui/                  # React + TypeScript + Vite frontend
-tests/               # integration tests (hot-swap, continuity, GUI mutate path)
-slots.example.json
-```
+**Future platforms:** Linux/macOS installers are not in v1; sidecar download URLs for those OSes are listed in `src-tauri/binaries/VERSION.txt`.
 
-## M4 � Resilience & local models
+## License
 
-- Ollama discovery (localhost:11434 + extra hosts) ? one-click openai_compatible profiles
-- Tray notification on `worker unavailable` (debounced: 1/slot/min)
-- Per-slot fallback chain GUI with **explicit opt-in** (still off by default)
-- Usage JSONL log under app config dir with size rotation + recent activity UI
+MIT — see [LICENSE](LICENSE). Third-party notices: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+## Updater keys
+
+Manual “Check for updates” only. Signing keys: [docs/UPDATER.md](docs/UPDATER.md).
