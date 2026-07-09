@@ -8,8 +8,8 @@ Slot-based model delegation: main agents (Claude Code, Codex) call a stable MCP 
 |-----------|--------|
 | **M1** Headless MCP core | Complete (audited) |
 | **M2** Tauri GUI | Complete (audited) |
-| **M3** CLIProxyAPI subscriptions | Complete |
-| M4 Resilience / Ollama discovery | Not started |
+| **M3** CLIProxyAPI subscriptions | Complete (audited) |
+| **M4** Resilience & local models | Complete |
 | M5 Packaging | Not started |
 
 ## Architecture
@@ -97,3 +97,10 @@ ui/                  # React + TypeScript + Vite frontend
 tests/               # integration tests (hot-swap, continuity, GUI mutate path)
 slots.example.json
 ```
+
+## M4 — Resilience & local models
+
+- Ollama discovery (localhost:11434 + extra hosts) ? one-click openai_compatible profiles
+- Tray notification on `worker unavailable` (debounced: 1/slot/min)
+- Per-slot fallback chain GUI with **explicit opt-in** (still off by default)
+- Usage JSONL log under app config dir with size rotation + recent activity UI

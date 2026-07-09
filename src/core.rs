@@ -12,6 +12,7 @@ use crate::error::{OrchestratorError, Result};
 use crate::registry::{PublicSlot, SlotRegistry};
 use crate::secrets::SecretStore;
 use crate::status::{SlotStatus, StatusBoard};
+use crate::usage::{UsageEvent, UsageLog};
 
 /// Arguments for a `delegate` call.
 #[derive(Debug, Clone, Default)]
@@ -44,11 +45,16 @@ pub struct SlotBoardItem {
     pub auth_ref: Option<String>,
     pub profile_id: Option<String>,
     pub profile_label: Option<String>,
+    pub enable_fallback: bool,
+    pub fallback: Vec<String>,
     pub last_call_at: Option<String>,
     pub last_latency_ms: Option<u64>,
     pub last_error: Option<String>,
     pub last_success: Option<bool>,
 }
+
+/// Optional hook when a worker becomes unavailable (tray notification, etc.).
+pub type WorkerUnavailableHook = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 /// Headless orchestrator core shared by the binary and the Tauri GUI.
 #[derive(Clone)]
@@ -57,6 +63,8 @@ pub struct Orchestrator {
     conversations: Arc<ConversationStore>,
     secrets: Arc<dyn SecretStore>,
     status: Arc<StatusBoard>,
+    usage: Option<Arc<UsageLog>>,
+    on_unavailable: Option<WorkerUnavailableHook>,
     http: reqwest::Client,
     /// When true, include `backend_id` in results (tests / debug).
     pub expose_backend_id: bool,
@@ -73,6 +81,8 @@ impl Orchestrator {
             conversations,
             secrets,
             status: Arc::new(StatusBoard::new()),
+            usage: None,
+            on_unavailable: None,
             http: reqwest::Client::new(),
             expose_backend_id: false,
         }
@@ -80,6 +90,16 @@ impl Orchestrator {
 
     pub fn with_status_board(mut self, status: Arc<StatusBoard>) -> Self {
         self.status = status;
+        self
+    }
+
+    pub fn with_usage_log(mut self, usage: Arc<UsageLog>) -> Self {
+        self.usage = Some(usage);
+        self
+    }
+
+    pub fn with_unavailable_hook(mut self, hook: WorkerUnavailableHook) -> Self {
+        self.on_unavailable = Some(hook);
         self
     }
 
@@ -95,8 +115,16 @@ impl Orchestrator {
         &self.status
     }
 
+    pub fn usage_log(&self) -> Option<&UsageLog> {
+        self.usage.as_deref()
+    }
+
     pub fn secrets(&self) -> &dyn SecretStore {
         self.secrets.as_ref()
+    }
+
+    pub fn http(&self) -> &reqwest::Client {
+        &self.http
     }
 
     /// List slot names + capability descriptions only.
@@ -112,7 +140,8 @@ impl Orchestrator {
             .slots
             .iter()
             .map(|(name, slot)| {
-                let (profile_id, profile_label) = find_matching_profile(&cfg.file.backend_profiles, slot);
+                let (profile_id, profile_label) =
+                    find_matching_profile(&cfg.file.backend_profiles, slot);
                 let st = self.status.get(name);
                 SlotBoardItem {
                     name: name.clone(),
@@ -123,6 +152,8 @@ impl Orchestrator {
                     auth_ref: slot.auth_ref.clone(),
                     profile_id,
                     profile_label,
+                    enable_fallback: slot.enable_fallback,
+                    fallback: slot.fallback.clone().unwrap_or_default(),
                     last_call_at: st.last_call_at.map(|t| t.to_rfc3339()),
                     last_latency_ms: st.last_latency_ms,
                     last_error: st.last_error,
@@ -149,7 +180,6 @@ impl Orchestrator {
     pub fn mcp_setup_command(&self, bearer_token: &str) -> Result<String> {
         let cfg = self.registry.current()?;
         let listen = cfg.file.listen.clone();
-        // Prefer localhost host form for copy-paste.
         let host = if listen.starts_with("127.0.0.1:") {
             listen.replacen("127.0.0.1", "localhost", 1)
         } else {
@@ -173,7 +203,6 @@ impl Orchestrator {
 
         let started = Instant::now();
 
-        // Critical: resolve on every call.
         let slot = match self.registry.resolve(&slot_name) {
             Ok(s) => s,
             Err(e) => {
@@ -181,25 +210,40 @@ impl Orchestrator {
                     .to_caller_message()
                     .trim_start_matches("worker unavailable: ")
                     .to_string();
-                self.status.record_error(
+                let latency_ms = started.elapsed().as_millis() as u64;
+                self.status.record_error(&slot_name, latency_ms, &msg);
+                self.record_usage(
                     &slot_name,
-                    started.elapsed().as_millis() as u64,
-                    &msg,
+                    None,
+                    "",
+                    "",
+                    latency_ms,
+                    false,
+                    Some(msg.clone()),
                 );
+                self.fire_unavailable(&slot_name, &msg);
                 return Err(OrchestratorError::WorkerUnavailable(msg));
             }
         };
 
-        // Conversation continuity.
-        // Fresh jobs: allocate id in memory only — persist only after success
-        // so a failed first call does not leave an orphan empty conversation file.
+        let (profile_id, _) =
+            find_matching_profile(&self.registry.current()?.file.backend_profiles, &slot);
+
         let (conversation_id, mut history, is_fresh) = if let Some(ref id) = req.conversation_id {
             let conv = self.conversations.get(id).map_err(|e| {
-                self.status.record_error(
+                let latency_ms = started.elapsed().as_millis() as u64;
+                let msg = e.to_string();
+                self.status.record_error(&slot_name, latency_ms, &msg);
+                self.record_usage(
                     &slot_name,
-                    started.elapsed().as_millis() as u64,
-                    e.to_string(),
+                    profile_id.as_deref(),
+                    &slot.base_url,
+                    &slot.model,
+                    latency_ms,
+                    false,
+                    Some(msg.clone()),
                 );
+                self.fire_unavailable(&slot_name, &msg);
                 e
             })?;
             (conv.id, conv.messages, false)
@@ -207,7 +251,6 @@ impl Orchestrator {
             (ConversationStore::allocate_id(), Vec::new(), true)
         };
 
-        // Build the new user turn (task + optional context/files).
         let mut user_parts = vec![req.task.clone()];
         if let Some(ctx) = req.context.as_ref().filter(|c| !c.is_empty()) {
             user_parts.push(format!("\n\n## Additional context\n{ctx}"));
@@ -225,10 +268,14 @@ impl Orchestrator {
         let user_message = ChatMessage::user(user_parts.join(""));
         history.push(user_message.clone());
 
-        // Invoke backend. Fallback chains exist in schema but are off by default.
+        // Track which backend actually answered (primary vs fallback).
+        let mut used_base = slot.base_url.clone();
+        let mut used_model = slot.model.clone();
+        let mut used_profile = profile_id.clone();
+
         let chat_result = invoke_slot(&slot, &history, self.secrets.as_ref(), &self.http).await;
 
-        // Optional explicit fallback only when enable_fallback is true.
+        // Fallback chains exist in schema but are **off by default**.
         let chat_result = match chat_result {
             Ok(r) => Ok(r),
             Err(e) if slot.enable_fallback => {
@@ -247,6 +294,13 @@ impl Orchestrator {
                                 .await
                                 {
                                     Ok(r) => {
+                                        used_base = fb_slot.base_url.clone();
+                                        used_model = fb_slot.model.clone();
+                                        let (pid, _) = find_matching_profile(
+                                            &self.registry.current()?.file.backend_profiles,
+                                            &fb_slot,
+                                        );
+                                        used_profile = pid;
                                         succeeded = Some(r);
                                         break;
                                     }
@@ -272,7 +326,6 @@ impl Orchestrator {
         let response = match chat_result {
             Ok(r) => r,
             Err(e) => {
-                // Do NOT persist fresh conversations on failure (orphan fix).
                 let msg = match e {
                     OrchestratorError::WorkerUnavailable(r) => r,
                     other => other
@@ -281,11 +334,20 @@ impl Orchestrator {
                         .to_string(),
                 };
                 self.status.record_error(&slot_name, latency_ms, &msg);
+                self.record_usage(
+                    &slot_name,
+                    used_profile.as_deref(),
+                    &used_base,
+                    &used_model,
+                    latency_ms,
+                    false,
+                    Some(msg.clone()),
+                );
+                self.fire_unavailable(&slot_name, &msg);
                 return Err(OrchestratorError::WorkerUnavailable(msg));
             }
         };
 
-        // Persist only after success.
         if is_fresh {
             self.conversations.create_with_messages(
                 &conversation_id,
@@ -301,6 +363,15 @@ impl Orchestrator {
         }
 
         self.status.record_success(&slot_name, latency_ms);
+        self.record_usage(
+            &slot_name,
+            used_profile.as_deref(),
+            &used_base,
+            &used_model,
+            latency_ms,
+            true,
+            None,
+        );
 
         Ok(DelegateResult {
             conversation_id,
@@ -311,6 +382,39 @@ impl Orchestrator {
                 None
             },
         })
+    }
+
+    fn record_usage(
+        &self,
+        slot: &str,
+        profile_id: Option<&str>,
+        base_url: &str,
+        model: &str,
+        latency_ms: u64,
+        success: bool,
+        reason: Option<String>,
+    ) {
+        if let Some(log) = &self.usage {
+            let ev = UsageEvent {
+                ts: chrono::Utc::now(),
+                slot: slot.to_string(),
+                profile_id: profile_id.map(|s| s.to_string()),
+                base_url: base_url.to_string(),
+                model: model.to_string(),
+                latency_ms,
+                success,
+                reason,
+            };
+            if let Err(e) = log.record(&ev) {
+                tracing::warn!("usage log write failed: {e}");
+            }
+        }
+    }
+
+    fn fire_unavailable(&self, slot: &str, reason: &str) {
+        if let Some(hook) = &self.on_unavailable {
+            hook(slot, reason);
+        }
     }
 }
 

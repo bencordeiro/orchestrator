@@ -1,6 +1,7 @@
 //! Tauri application library: hosts MCP server + slot board GUI + CLIProxyAPI sidecar.
 
 mod commands;
+mod notify_bridge;
 mod sidecar;
 mod state;
 
@@ -44,6 +45,7 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
+        .plugin(tauri_plugin_notification::init())
         .manage(app_state)
         .manage(_rt_guard)
         .invoke_handler(tauri::generate_handler![
@@ -65,9 +67,19 @@ pub fn run() {
             commands::disconnect_subscription_account,
             commands::sync_subscription_profiles,
             commands::list_oauth_providers,
+            commands::set_slot_fallback,
+            commands::discover_ollama_models,
+            commands::get_ollama_extra_hosts,
+            commands::set_ollama_extra_hosts,
+            commands::create_ollama_profile,
+            commands::get_recent_usage,
         ])
         .setup(|app| {
             setup_tray(app.handle())?;
+            // Wire tray notifications for worker-unavailable (MCP thread → GUI).
+            if let Some(state) = app.try_state::<AppState>() {
+                state.notify.set_app(app.handle().clone());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -277,3 +277,111 @@ pub fn list_oauth_providers() -> Vec<String> {
         .map(|(n, _)| (*n).to_string())
         .collect()
 }
+
+// ── M4: Ollama, fallback config, usage ───────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetFallbackArgs {
+    pub name: String,
+    pub enable_fallback: bool,
+    pub fallback: Vec<String>,
+}
+
+#[tauri::command]
+pub fn set_slot_fallback(state: State<'_, AppState>, args: SetFallbackArgs) -> Result<(), String> {
+    state
+        .orchestrator
+        .registry()
+        .mutate(|file| {
+            let slot = file.slots.get_mut(&args.name).ok_or_else(|| {
+                orchestrator::OrchestratorError::UnknownSlot(args.name.clone())
+            })?;
+            slot.enable_fallback = args.enable_fallback;
+            slot.fallback = if args.fallback.is_empty() {
+                None
+            } else {
+                Some(args.fallback)
+            };
+            Ok(())
+        })
+        .map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn discover_ollama_models(
+    state: State<'_, AppState>,
+) -> Result<Vec<orchestrator::OllamaModel>, String> {
+    let extra = load_extra_hosts(&state.ollama_hosts_path);
+    let models = orchestrator::discover_models(state.orchestrator.http(), &extra).await;
+    Ok(models)
+}
+
+#[tauri::command]
+pub fn get_ollama_extra_hosts(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    Ok(load_extra_hosts(&state.ollama_hosts_path))
+}
+
+#[tauri::command]
+pub fn set_ollama_extra_hosts(
+    state: State<'_, AppState>,
+    hosts: Vec<String>,
+) -> Result<(), String> {
+    save_extra_hosts(&state.ollama_hosts_path, &hosts).map_err(map_err)
+}
+
+#[tauri::command]
+pub fn create_ollama_profile(
+    state: State<'_, AppState>,
+    host: String,
+    model: String,
+) -> Result<String, String> {
+    use orchestrator::config::{BackendKind, BackendProfile};
+    use orchestrator::ollama::{normalize_host, profile_id_for_model};
+
+    let host = normalize_host(&host);
+    let id = profile_id_for_model(&host, &model);
+    let label = format!("Ollama · {model} @ {host}");
+    let profile = BackendProfile {
+        label,
+        backend: BackendKind::OpenaiCompatible,
+        base_url: format!("{host}/v1"),
+        model,
+        auth_ref: None,
+    };
+    state
+        .orchestrator
+        .registry()
+        .upsert_backend_profile(&id, profile)
+        .map_err(map_err)?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn get_recent_usage(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<orchestrator::UsageEvent>, String> {
+    let limit = limit.unwrap_or(50).min(500);
+    match state.orchestrator.usage_log() {
+        Some(log) => log.recent(limit).map_err(map_err),
+        None => Ok(vec![]),
+    }
+}
+
+fn load_extra_hosts(path: &std::path::Path) -> Vec<String> {
+    let raw = std::fs::read_to_string(path).unwrap_or_default();
+    if raw.trim().is_empty() {
+        return vec![];
+    }
+    serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default()
+}
+
+fn save_extra_hosts(path: &std::path::Path, hosts: &[String]) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let raw = serde_json::to_string_pretty(hosts)?;
+    std::fs::write(path, raw)?;
+    Ok(())
+}

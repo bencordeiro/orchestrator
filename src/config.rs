@@ -89,7 +89,7 @@ pub struct SlotConfig {
     /// Backend adapter kind.
     pub backend: BackendKind,
 
-    /// Base URL for the provider API (e.g. `http://10.0.0.10:8000/v1`).
+    /// Base URL for the provider API (e.g. `http://localhost:11434/v1`).
     pub base_url: String,
 
     /// Model id sent to the backend.
@@ -203,21 +203,21 @@ pub fn write_example_if_missing(path: &Path) -> Result<()> {
   "bearer_token_ref": "mcp_bearer_token",
   "conversations_dir": "data/conversations",
   "backend_profiles": {
-    "local-qwen": {
-      "label": "Local Qwen (10.0.0.10)",
+    "ollama-local": {
+      "label": "Ollama local",
       "backend": "openai_compatible",
-      "base_url": "http://10.0.0.10:8000/v1",
-      "model": "qwen35b",
-      "auth_ref": "worker_api_key"
+      "base_url": "http://localhost:11434/v1",
+      "model": "llama3.2",
+      "auth_ref": null
     }
   },
   "slots": {
     "worker": {
       "description": "General-purpose coding and reasoning worker",
       "backend": "openai_compatible",
-      "base_url": "http://10.0.0.10:8000/v1",
-      "model": "qwen35b",
-      "auth_ref": "worker_api_key",
+      "base_url": "http://localhost:11434/v1",
+      "model": "llama3.2",
+      "auth_ref": null,
       "fallback": [],
       "enable_fallback": false
     }

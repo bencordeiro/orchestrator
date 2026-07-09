@@ -16,10 +16,29 @@ type SlotBoardItem = {
   auth_ref: string | null
   profile_id: string | null
   profile_label: string | null
+  enable_fallback: boolean
+  fallback: string[]
   last_call_at: string | null
   last_latency_ms: number | null
   last_error: string | null
   last_success: boolean | null
+}
+
+type OllamaModel = {
+  name: string
+  host: string
+  openai_base_url: string
+}
+
+type UsageEvent = {
+  ts: string
+  slot: string
+  profile_id?: string | null
+  base_url: string
+  model: string
+  latency_ms: number
+  success: boolean
+  reason?: string | null
 }
 
 type BackendProfileView = {
@@ -89,10 +108,13 @@ function App() {
   const [accounts, setAccounts] = useState<AuthAccount[]>([])
   const [oauthProviders, setOauthProviders] = useState<string[]>([])
   const [oauthProvider, setOauthProvider] = useState('claude')
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
+  const [extraHosts, setExtraHosts] = useState('')
+  const [usage, setUsage] = useState<UsageEvent[]>([])
 
   const refresh = useCallback(async () => {
     try {
-      const [board, pro, info, cmd, sc, acc, prov] = await Promise.all([
+      const [board, pro, info, cmd, sc, acc, prov, hosts, recent] = await Promise.all([
         invoke<SlotBoardItem[]>('get_slot_board'),
         invoke<BackendProfileView[]>('get_backend_profiles'),
         invoke<ServerInfo>('get_server_info'),
@@ -100,6 +122,8 @@ function App() {
         invoke<SidecarStatus>('get_sidecar_status'),
         invoke<AuthAccount[]>('list_subscription_accounts'),
         invoke<string[]>('list_oauth_providers'),
+        invoke<string[]>('get_ollama_extra_hosts'),
+        invoke<UsageEvent[]>('get_recent_usage', { limit: 40 }),
       ])
       setSlots(board)
       setProfiles(pro)
@@ -108,6 +132,8 @@ function App() {
       setSidecar(sc)
       setAccounts(acc)
       setOauthProviders(prov)
+      setExtraHosts(hosts.join('\n'))
+      setUsage(recent)
       setError(null)
       if (pro.length && !newProfile) {
         setNewProfile(pro[0].id)
@@ -251,6 +277,55 @@ function App() {
     try {
       const ids = await invoke<string[]>('sync_subscription_profiles')
       setStatusMsg(`Synced ${ids.length} subscription profile(s) into backend dropdown`)
+      await refresh()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  async function discoverOllama() {
+    try {
+      const hosts = extraHosts
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      await invoke('set_ollama_extra_hosts', { hosts })
+      const models = await invoke<OllamaModel[]>('discover_ollama_models')
+      setOllamaModels(models)
+      setStatusMsg(
+        models.length
+          ? `Found ${models.length} Ollama model(s)`
+          : 'No Ollama models found (is Ollama running on localhost:11434?)',
+      )
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  async function createOllamaProfile(m: OllamaModel) {
+    try {
+      const id = await invoke<string>('create_ollama_profile', { host: m.host, model: m.name })
+      setStatusMsg(`Created backend profile "${id}" — available in slot dropdown`)
+      await refresh()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  async function saveFallback(slot: SlotBoardItem, enable: boolean, chain: string) {
+    try {
+      const fallback = chain
+        .split(/[,\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      await invoke('set_slot_fallback', {
+        args: { name: slot.name, enableFallback: enable, fallback },
+      })
+      setStatusMsg(
+        enable
+          ? `Fallback enabled for "${slot.name}" → ${fallback.join(' → ') || '(empty chain)'}`
+          : `Fallback disabled for "${slot.name}" (default)`,
+      )
       await refresh()
     } catch (e) {
       setError(String(e))
@@ -407,6 +482,44 @@ function App() {
       </section>
 
       <section className="panel">
+        <h2>Local models (Ollama)</h2>
+        <p className="meta">
+          Probes <code>http://localhost:11434</code> plus optional extra hosts. Creates ordinary{' '}
+          <code>openai_compatible</code> profiles (no core special-casing).
+        </p>
+        <label className="field">
+          Extra hosts (one per line)
+          <textarea
+            rows={2}
+            value={extraHosts}
+            onChange={(e) => setExtraHosts(e.target.value)}
+            placeholder="http://192.168.1.20:11434"
+          />
+        </label>
+        <button type="button" className="btn" onClick={discoverOllama}>
+          Discover Ollama models
+        </button>
+        <ul className="profile-list">
+          {ollamaModels.map((m) => (
+            <li key={`${m.host}-${m.name}`}>
+              <div className="card-head">
+                <strong>{m.name}</strong>
+                <button type="button" className="btn sm" onClick={() => createOllamaProfile(m)}>
+                  Create profile
+                </button>
+              </div>
+              <div className="meta">
+                {m.host} → <code>{m.openai_base_url}</code>
+              </div>
+            </li>
+          ))}
+          {ollamaModels.length === 0 && (
+            <p className="empty">No models discovered yet — click Discover.</p>
+          )}
+        </ul>
+      </section>
+
+      <section className="panel">
         <h2>Slot board</h2>
         <div className="cards">
           {slots.map((s) => (
@@ -445,6 +558,27 @@ function App() {
                   ))}
                 </select>
               </label>
+              <div className="fallback-box">
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={!!s.enable_fallback}
+                    onChange={(e) =>
+                      saveFallback(s, e.target.checked, (s.fallback ?? []).join(', '))
+                    }
+                  />
+                  Opt-in fallback chain (off by default)
+                </label>
+                <label className="field">
+                  Fallback slot names (ordered, comma-separated)
+                  <input
+                    defaultValue={(s.fallback ?? []).join(', ')}
+                    key={`${s.name}-fb-${(s.fallback ?? []).join(',')}`}
+                    placeholder="reviewer, backup"
+                    onBlur={(e) => saveFallback(s, !!s.enable_fallback, e.target.value)}
+                  />
+                </label>
+              </div>
               <div className="status">
                 <div>
                   <span className="label">Last call</span>
@@ -545,7 +679,7 @@ function App() {
             <input
               value={profUrl}
               onChange={(e) => setProfUrl(e.target.value)}
-              placeholder="http://10.0.0.10:8000/v1"
+              placeholder="http://localhost:11434/v1"
             />
           </label>
           <label className="field">
@@ -571,8 +705,32 @@ function App() {
         </section>
       </div>
 
+      <section className="panel">
+        <h2>Recent activity (usage log)</h2>
+        <p className="meta">
+          JSONL under app config dir · success/failure, latency, reason · rotated when large. No token
+          counting in v1.
+        </p>
+        <div className="usage-table">
+          {usage.map((u, i) => (
+            <div key={`${u.ts}-${i}`} className={`usage-row ${u.success ? 'ok' : 'err'}`}>
+              <span className="usage-ts">{formatTime(u.ts)}</span>
+              <span className="usage-slot">{u.slot}</span>
+              <span className="usage-model">
+                {u.model}
+                {u.profile_id ? ` · ${u.profile_id}` : ''}
+              </span>
+              <span className="usage-lat">{u.latency_ms} ms</span>
+              <span className="usage-res">{u.success ? 'OK' : u.reason ?? 'fail'}</span>
+            </div>
+          ))}
+          {usage.length === 0 && <p className="empty">No usage events yet.</p>}
+        </div>
+      </section>
+
       <footer className="footer">
-        Close window to hide to tray · Quit from tray menu · GUI mutations call force_reload()
+        Close window to hide to tray · Quit from tray menu · GUI mutations call force_reload() · Fallback
+        chains opt-in only
       </footer>
     </div>
   )

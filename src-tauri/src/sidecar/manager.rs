@@ -165,7 +165,6 @@ impl SidecarManager {
             self.seed_proxy_key_in_keychain(&s)?;
         }
         self.spawn_if_needed()?;
-        self.start_supervisor();
         // Wait briefly for health.
         for _ in 0..20 {
             if self.health_check().await.is_ok() {
@@ -202,12 +201,7 @@ impl SidecarManager {
                 super::config::PINNED_VERSION
             ));
         }
-        let s = {
-            // blocking read of settings via try — spawn is sync
-            // We require config.yaml already written.
-            ()
-        };
-        let _ = s;
+        // config.yaml must already be written by ensure_running / set_enabled.
         let mut cmd = Command::new(&self.paths.binary);
         cmd.arg("-config")
             .arg(&self.paths.config_yaml)
@@ -225,17 +219,6 @@ impl SidecarManager {
             .with_context(|| format!("spawn {}", self.paths.binary.display()))?;
         *guard = Some(child);
         Ok(())
-    }
-
-    fn start_supervisor(&self) {
-        let mut h = self.supervise_handle.lock().unwrap();
-        if h.as_ref().map(|x| !x.is_finished()).unwrap_or(false) {
-            return;
-        }
-        // We cannot easily move self into a task; use raw pieces via Arc pattern.
-        // Supervisor is driven from AppState via periodic ensure — lightweight here:
-        // just mark that supervision is desired. Full restart loop runs in `supervise_loop`.
-        *h = None;
     }
 
     /// Background restart loop (call once from bootstrap with Arc).

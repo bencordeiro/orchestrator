@@ -7,11 +7,12 @@ use orchestrator::core::Orchestrator;
 use orchestrator::mcp::server::{load_bearer_token, serve_forever, McpState};
 use orchestrator::{
     write_example_if_missing, ConversationStore, KeyringSecretStore, LoadedConfig, SecretStore,
-    SlotRegistry,
+    SlotRegistry, UsageLog, USAGE_DEFAULT_MAX_BYTES,
 };
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::notify_bridge::NotifyBridge;
 use crate::sidecar::{CliproxySettings, SidecarManager, SidecarPaths};
 
 /// Process-wide app state shared with Tauri commands.
@@ -23,6 +24,9 @@ pub struct AppState {
     /// MCP server join handle (kept so the task is not dropped).
     pub _mcp_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub sidecar: Arc<SidecarManager>,
+    pub notify: Arc<NotifyBridge>,
+    /// Extra Ollama hosts (beyond localhost:11434), persisted as JSON.
+    pub ollama_hosts_path: PathBuf,
 }
 
 impl AppState {
@@ -45,7 +49,6 @@ impl AppState {
                     tracing::warn!("using ORCHESTRATOR_BEARER_TOKEN env override");
                     t
                 } else {
-                    // First-run convenience: generate and store a token.
                     let generated = Uuid::new_v4().to_string();
                     secrets.set(&bearer_ref, &generated)?;
                     tracing::info!("generated and stored MCP bearer token in keychain");
@@ -62,7 +65,20 @@ impl AppState {
 
         let registry = Arc::new(SlotRegistry::open(&config_path)?);
         let conversations = Arc::new(ConversationStore::new(conv_dir)?);
-        let orchestrator = Orchestrator::new(registry.clone(), conversations, secrets);
+
+        // Usage log under app config dir.
+        let usage_path = usage_log_path(&config_path);
+        let usage = Arc::new(UsageLog::open(&usage_path, USAGE_DEFAULT_MAX_BYTES)?);
+
+        let notify = Arc::new(NotifyBridge::new());
+        let notify_for_hook = notify.clone();
+        let hook: orchestrator::WorkerUnavailableHook = Arc::new(move |slot, reason| {
+            notify_for_hook.on_worker_unavailable(slot, reason);
+        });
+
+        let orchestrator = Orchestrator::new(registry.clone(), conversations, secrets)
+            .with_usage_log(usage)
+            .with_unavailable_hook(hook);
 
         let mcp_state = McpState {
             orchestrator: orchestrator.clone(),
@@ -76,7 +92,6 @@ impl AppState {
             }
         });
 
-        // CLIProxyAPI sidecar (optional until enabled / subscriptions exist).
         let paths = SidecarPaths::resolve(&config_path)?;
         paths.ensure_dirs()?;
         let settings = paths.load_or_init_settings().unwrap_or_else(|_| {
@@ -94,6 +109,8 @@ impl AppState {
             tracing::debug!("subscription profile sync: {e:#}");
         }
 
+        let ollama_hosts_path = ollama_hosts_path(&config_path);
+
         Ok(Self {
             orchestrator,
             bearer_token: Arc::new(bearer),
@@ -101,8 +118,28 @@ impl AppState {
             config_path,
             _mcp_handle: Mutex::new(Some(handle)),
             sidecar,
+            notify,
+            ollama_hosts_path,
         })
     }
+}
+
+fn app_data_root(slots_config: &std::path::Path) -> PathBuf {
+    if let Some(cfg) = dirs::config_dir() {
+        cfg.join("orchestrator")
+    } else if let Some(p) = slots_config.parent() {
+        p.to_path_buf()
+    } else {
+        PathBuf::from(".")
+    }
+}
+
+fn usage_log_path(slots_config: &std::path::Path) -> PathBuf {
+    app_data_root(slots_config).join("usage.jsonl")
+}
+
+fn ollama_hosts_path(slots_config: &std::path::Path) -> PathBuf {
+    app_data_root(slots_config).join("ollama_hosts.json")
 }
 
 /// Resolve default slots.json path (next to exe, or cwd, or config dir).
@@ -110,7 +147,6 @@ pub fn default_config_path() -> PathBuf {
     if let Ok(p) = std::env::var("ORCHESTRATOR_SLOTS") {
         return PathBuf::from(p);
     }
-    // Prefer cwd for dev; fall back to config dir.
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let local = cwd.join("slots.json");
     if local.exists() {
@@ -121,7 +157,6 @@ pub fn default_config_path() -> PathBuf {
         if p.exists() {
             return p;
         }
-        // Ensure parent exists for first write.
         let _ = std::fs::create_dir_all(p.parent().unwrap());
         return p;
     }

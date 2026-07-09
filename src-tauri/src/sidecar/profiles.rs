@@ -205,8 +205,8 @@ mod tests {
             BackendProfile {
                 label: "Local".into(),
                 backend: BackendKind::OpenaiCompatible,
-                base_url: "http://10.0.0.10:8000/v1".into(),
-                model: "qwen".into(),
+                base_url: "http://localhost:11434/v1".into(),
+                model: "llama3.2".into(),
                 auth_ref: None,
             },
         )

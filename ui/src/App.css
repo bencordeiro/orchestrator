@@ -329,6 +329,55 @@ body {
   margin-bottom: 0.75rem;
 }
 
+.fallback-box {
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.usage-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 280px;
+  overflow: auto;
+  font-size: 0.82rem;
+}
+
+.usage-row {
+  display: grid;
+  grid-template-columns: 9rem 5rem 1fr 4.5rem 1.5fr;
+  gap: 0.4rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.usage-row.err {
+  border-color: rgba(240, 113, 120, 0.4);
+}
+
+.usage-row.ok {
+  border-color: rgba(61, 214, 140, 0.25);
+}
+
+.usage-ts {
+  color: var(--muted);
+}
+
+.usage-res {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .usage-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 code {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 0.85em;
