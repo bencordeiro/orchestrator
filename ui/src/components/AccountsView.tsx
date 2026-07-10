@@ -26,7 +26,8 @@ const PROVIDER_MODEL_HINTS: Record<string, string[]> = {
   anthropic: ['claude'],
   codex: ['gpt', 'codex', 'o1', 'o3', 'o4'],
   openai: ['gpt', 'codex', 'o1', 'o3', 'o4'],
-  antigravity: ['gemini'],
+  // Antigravity brokers more than Gemini (Claude + gpt-oss observed live).
+  antigravity: ['gemini', 'claude', 'gpt-oss'],
   gemini: ['gemini'],
   xai: ['grok'],
   grok: ['grok'],
