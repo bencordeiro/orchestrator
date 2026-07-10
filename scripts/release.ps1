@@ -88,7 +88,10 @@ $defaultKey = Join-Path $env:USERPROFILE ".tauri\orchestrator\orchestrator.key"
 if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
   if ($env:TAURI_SIGNING_PRIVATE_KEY_PATH -and (Test-Path $env:TAURI_SIGNING_PRIVATE_KEY_PATH)) {
     $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content $env:TAURI_SIGNING_PRIVATE_KEY_PATH -Raw).Trim()
-  } elseif (Test-Path $defaultKey) {
+  } elseif ((Test-Path $defaultKey) -and $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
+    # Only load the key when its password is provided non-interactively;
+    # a password-protected key without one makes the CLI prompt and hang
+    # unattended builds (CI passes both via secrets).
     $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content $defaultKey -Raw).Trim()
     Write-Host "Loaded updater private key from $defaultKey"
   } else {
