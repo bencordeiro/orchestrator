@@ -7,6 +7,8 @@
 !.env.example
 slots.json
 data/
+# Contains the local MCP bearer token — never commit
+.mcp.json
 *.log
 .idea/
 .vscode/
