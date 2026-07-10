@@ -101,8 +101,12 @@ impl AppState {
         });
         let _ = paths.write_proxy_config(&settings);
         let sidecar = Arc::new(SidecarManager::new(paths, settings, registry));
-        if let Err(e) = sidecar.maybe_autostart().await {
-            tracing::warn!("CLIProxyAPI autostart skipped: {e:#}");
+        // Always attempt autostart when credentials / sub-profiles exist.
+        // Errors (e.g. missing binary) are logged but must not leave enabled=false
+        // if auth files are present — maybe_autostart persists enabled=true first.
+        match sidecar.maybe_autostart().await {
+            Ok(()) => tracing::info!("CLIProxyAPI autostart OK"),
+            Err(e) => tracing::warn!("CLIProxyAPI autostart incomplete: {e:#}"),
         }
         sidecar.spawn_supervisor_loop();
         if let Err(e) = sidecar.sync_profiles().await {

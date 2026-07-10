@@ -18,6 +18,7 @@ pub const DEFAULT_PORT: u16 = 18317;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliproxySettings {
     /// User opted in to running the sidecar (or auto-enabled after first connect).
+    /// When auth credentials exist, autostart forces this true.
     #[serde(default)]
     pub enabled: bool,
     /// Local OpenAI-compatible listen port.
@@ -28,6 +29,10 @@ pub struct CliproxySettings {
     pub management_key: String,
     /// Proxy API key clients use when calling /v1/* on the sidecar.
     pub proxy_api_key: String,
+    /// Per-account model overrides (keyed by auth file name / account id).
+    /// Used by `sync_subscription_profiles` instead of the provider heuristic.
+    #[serde(default)]
+    pub model_overrides: std::collections::HashMap<String, String>,
 }
 
 fn default_port() -> u16 {
@@ -41,6 +46,7 @@ impl CliproxySettings {
             port: DEFAULT_PORT,
             management_key: format!("mgmt-{}", Uuid::new_v4()),
             proxy_api_key: format!("proxy-{}", Uuid::new_v4()),
+            model_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -93,14 +99,38 @@ impl SidecarPaths {
         self.ensure_dirs()?;
         if self.settings_json.exists() {
             let raw = fs::read_to_string(&self.settings_json)?;
-            let s: CliproxySettings = serde_json::from_str(&raw)
-                .with_context(|| format!("parse {}", self.settings_json.display()))?;
-            Ok(s)
+            match serde_json::from_str::<CliproxySettings>(&raw) {
+                Ok(s) => Ok(s),
+                Err(e) => {
+                    // Never overwrite a broken file with generate_fresh() (that would
+                    // rotate management/proxy keys and clear enabled). Keep a backup.
+                    tracing::error!(
+                        "failed to parse {}: {e}; leaving file in place",
+                        self.settings_json.display()
+                    );
+                    Err(e).with_context(|| format!("parse {}", self.settings_json.display()))
+                }
+            }
         } else {
             let s = CliproxySettings::generate_fresh();
             self.save_settings(&s)?;
             Ok(s)
         }
+    }
+
+    /// True if the auth dir has at least one `*.json` credential file.
+    pub fn has_auth_credentials(&self) -> bool {
+        let Ok(rd) = fs::read_dir(&self.auth_dir) else {
+            return false;
+        };
+        rd.filter_map(|e| e.ok()).any(|e| {
+            let p = e.path();
+            p.is_file()
+                && p.extension()
+                    .and_then(|x| x.to_str())
+                    .map(|x| x.eq_ignore_ascii_case("json"))
+                    .unwrap_or(false)
+        })
     }
 
     pub fn save_settings(&self, s: &CliproxySettings) -> Result<()> {

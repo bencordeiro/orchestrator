@@ -193,9 +193,21 @@ pub fn remove_backend_profile(state: State<'_, AppState>, id: String) -> Result<
 
 #[tauri::command]
 pub fn get_mcp_setup_command(state: State<'_, AppState>) -> Result<String, String> {
+    // Backward-compatible: Claude only.
     state
         .orchestrator
         .mcp_setup_command(state.bearer_token.as_str())
+        .map_err(map_err)
+}
+
+/// Dual setup commands for Claude Code and Codex CLI.
+#[tauri::command]
+pub fn get_mcp_setup_commands(
+    state: State<'_, AppState>,
+) -> Result<orchestrator::McpSetupCommands, String> {
+    state
+        .orchestrator
+        .mcp_setup_commands(state.bearer_token.as_str())
         .map_err(map_err)
 }
 
@@ -219,26 +231,108 @@ pub async fn set_sidecar_enabled(state: State<'_, AppState>, enabled: bool) -> R
     state.sidecar.set_enabled(enabled).await.map_err(map_err)
 }
 
+/// Structured accounts response — never errors for disabled/not-installed.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountsListResult {
+    /// `ok` | `disabled` | `not_installed` | `stopped` | `unhealthy`
+    pub state: String,
+    pub message: String,
+    pub accounts: Vec<crate::sidecar::AuthAccount>,
+}
+
 #[tauri::command]
 pub async fn list_subscription_accounts(
     state: State<'_, AppState>,
-) -> Result<Vec<crate::sidecar::AuthAccount>, String> {
-    // If not running, return empty with no hard error — GUI shows status separately.
+) -> Result<AccountsListResult, String> {
+    use crate::sidecar::SidecarPresence;
+    let st = state.sidecar.status_snapshot().await;
+    match st.presence {
+        SidecarPresence::NotInstalled => {
+            return Ok(AccountsListResult {
+                state: "not_installed".into(),
+                message: "CLIProxyAPI sidecar binary is not installed. Run scripts/download-cliproxy.ps1 or rebuild the release package.".into(),
+                accounts: vec![],
+            });
+        }
+        SidecarPresence::Disabled => {
+            return Ok(AccountsListResult {
+                state: "disabled".into(),
+                message: "Subscriptions are off. Enable the sidecar to connect provider accounts.".into(),
+                accounts: vec![],
+            });
+        }
+        _ => {}
+    }
     match state.sidecar.client().await.list_auth_files().await {
-        Ok(a) => Ok(a),
+        Ok(a) => Ok(AccountsListResult {
+            state: "ok".into(),
+            message: if a.is_empty() {
+                "No accounts connected yet.".into()
+            } else {
+                format!("{} account(s)", a.len())
+            },
+            accounts: a,
+        }),
         Err(e) => {
             let msg = e.to_string();
+            // Unreachable / not running — calm structured state, not a red error.
             if msg.contains("not running")
                 || msg.contains("connection")
                 || msg.contains("timed out")
                 || msg.contains("error sending")
+                || msg.contains("Connect")
             {
-                Ok(vec![])
+                let state_s = if st.presence == SidecarPresence::Unhealthy {
+                    "unhealthy"
+                } else {
+                    "stopped"
+                };
+                Ok(AccountsListResult {
+                    state: state_s.into(),
+                    message: "Subscription sidecar is not reachable. It will start when enabled or when credentials are present.".into(),
+                    accounts: vec![],
+                })
             } else {
-                Err(msg)
+                // Unexpected: still return structured payload rather than hard Err.
+                Ok(AccountsListResult {
+                    state: "unhealthy".into(),
+                    message: format!("Could not list accounts: {msg}"),
+                    accounts: vec![],
+                })
             }
         }
     }
+}
+
+#[tauri::command]
+pub async fn list_proxy_models(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.sidecar.list_proxy_models().await.map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn set_account_model_override(
+    state: State<'_, AppState>,
+    account_id: String,
+    model: String,
+) -> Result<Vec<String>, String> {
+    state
+        .sidecar
+        .set_account_model_override(&account_id, &model)
+        .await
+        .map_err(map_err)
+}
+
+#[tauri::command]
+pub async fn clear_account_model_override(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<String>, String> {
+    state
+        .sidecar
+        .clear_account_model_override(&account_id)
+        .await
+        .map_err(map_err)
 }
 
 #[tauri::command]

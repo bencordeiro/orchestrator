@@ -28,11 +28,32 @@ pub const OAUTH_PROVIDERS: &[(&str, &str)] = &[
     ("xai", "-xai-login"),
 ];
 
+/// Coarse lifecycle state for calm UI rendering (no error spam when off).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SidecarPresence {
+    /// Binary missing from install / download not run.
+    NotInstalled,
+    /// User has not enabled subscriptions and no auth is present.
+    #[default]
+    Disabled,
+    /// Enabled (or auth present) but process not running.
+    Stopped,
+    /// Process up, health OK.
+    Running,
+    /// Process up but health check failing.
+    Unhealthy,
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct SidecarStatus {
     pub enabled: bool,
     pub running: bool,
     pub healthy: bool,
+    /// Structured presence for UI (`not_installed`, `disabled`, `stopped`, `running`, `unhealthy`).
+    pub presence: SidecarPresence,
+    pub binary_present: bool,
+    pub has_auth_credentials: bool,
     pub version_pin: String,
     pub base_url: String,
     pub openai_base_url: String,
@@ -117,44 +138,62 @@ impl SidecarManager {
         Ok(())
     }
 
-    /// Start if enabled or if auth files / sub profiles already exist.
+    /// Start if enabled **or** if auth files / `sub-*` profiles already exist.
+    ///
+    /// Important: presence of credentials forces `enabled=true` and persists it.
+    /// `stop()` / app quit must **never** write `enabled: false`.
     pub async fn maybe_autostart(&self) -> Result<()> {
-        let mut should = {
-            let s = self.settings.read().await;
-            s.enabled
-        };
+        // Re-load settings from disk so we don't act on a stale in-memory snapshot.
+        if let Ok(disk) = self.paths.load_or_init_settings() {
+            *self.settings.write().await = disk;
+        }
+
+        let has_auth = self.paths.has_auth_credentials();
+        let has_sub_profiles = self
+            .registry
+            .current()
+            .map(|c| c.file.backend_profiles.keys().any(|k| k.starts_with("sub-")))
+            .unwrap_or(false);
+        let already_enabled = self.settings.read().await.enabled;
+
+        let should = already_enabled || has_auth || has_sub_profiles;
+        tracing::info!(
+            already_enabled,
+            has_auth,
+            has_sub_profiles,
+            should,
+            auth_dir = %self.paths.auth_dir.display(),
+            "cliproxy maybe_autostart"
+        );
+
         if !should {
-            // Auto-enable if auth dir has credentials.
-            if self.paths.auth_dir.exists() {
-                if let Ok(rd) = std::fs::read_dir(&self.paths.auth_dir) {
-                    should = rd.filter_map(|e| e.ok()).any(|e| {
-                        e.path()
-                            .extension()
-                            .and_then(|x| x.to_str())
-                            .map(|x| x == "json")
-                            .unwrap_or(false)
-                    });
-                }
+            return Ok(());
+        }
+
+        // Persist enabled=true whenever we autostart due to credentials.
+        {
+            let mut s = self.settings.write().await;
+            if !s.enabled {
+                s.enabled = true;
+                self.paths.save_settings(&s)?;
+                tracing::info!("cliproxy: persisted enabled=true (auth or sub-profiles present)");
+            }
+            self.paths.write_proxy_config(&s)?;
+            // Keychain seed is best-effort; do not fail autostart if OS keyring is flaky.
+            if let Err(e) = self.seed_proxy_key_in_keychain(&s) {
+                tracing::warn!("cliproxy: seed proxy key failed (continuing): {e}");
             }
         }
-        if !should {
-            let cfg = self.registry.current()?;
-            should = cfg.file.backend_profiles.keys().any(|k| k.starts_with("sub-"));
-        }
-        if should {
-            {
-                let mut s = self.settings.write().await;
-                if !s.enabled {
-                    s.enabled = true;
-                    self.paths.save_settings(&s)?;
-                }
-                self.paths.write_proxy_config(&s)?;
-                self.seed_proxy_key_in_keychain(&s)?;
+        self.status.write().await.enabled = true;
+
+        match self.ensure_running().await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Keep enabled=true so the next launch still tries.
+                tracing::warn!("cliproxy: ensure_running failed (enabled stays true): {e:#}");
+                Err(e)
             }
-            self.status.write().await.enabled = true;
-            self.ensure_running().await?;
         }
-        Ok(())
     }
 
     pub async fn ensure_running(&self) -> Result<()> {
@@ -295,6 +334,7 @@ impl SidecarManager {
         self.client().await.health().await
     }
 
+    /// Kill the process only. **Does not** write `enabled: false` to settings.
     pub async fn stop(&self) -> Result<()> {
         self.stop_flag.store(true, Ordering::SeqCst);
         if let Some(h) = self.supervise_handle.lock().unwrap().take() {
@@ -311,11 +351,14 @@ impl SidecarManager {
         let mut st = self.status.write().await;
         st.running = false;
         st.healthy = false;
+        // Intentionally leave settings.enabled unchanged on disk.
         Ok(())
     }
 
     pub async fn status_snapshot(&self) -> SidecarStatus {
         let mut st = self.status.read().await.clone();
+        let binary_present = self.paths.binary.exists();
+        let has_auth = self.paths.has_auth_credentials();
         // Refresh running bit.
         let running = {
             let mut g = self.child.lock().unwrap();
@@ -324,20 +367,53 @@ impl SidecarManager {
                 None => false,
             }
         };
-        st.running = running;
+        let healthy = if running {
+            self.health_check().await.is_ok()
+        } else {
+            false
+        };
         let s = self.settings.read().await;
         st.enabled = s.enabled;
+        st.running = running;
+        st.healthy = healthy;
+        st.binary_present = binary_present;
+        st.has_auth_credentials = has_auth;
         st.port = s.port;
         st.base_url = self.paths.base_url(&s);
         st.openai_base_url = self.paths.openai_base_url(&s);
+        st.binary_path = self.paths.binary.display().to_string();
+        st.config_path = self.paths.config_yaml.display().to_string();
+        st.presence = if !binary_present {
+            SidecarPresence::NotInstalled
+        } else if !s.enabled && !has_auth {
+            SidecarPresence::Disabled
+        } else if running && healthy {
+            SidecarPresence::Running
+        } else if running {
+            SidecarPresence::Unhealthy
+        } else {
+            SidecarPresence::Stopped
+        };
+        // Clear noisy last_error when calmly disabled / not installed.
+        if matches!(
+            st.presence,
+            SidecarPresence::Disabled | SidecarPresence::NotInstalled
+        ) {
+            st.last_error = None;
+        }
         st
     }
 
     /// Sync accounts → backend profiles (generic openai_compatible).
     pub async fn sync_profiles(&self) -> Result<Vec<String>> {
         let st = self.status_snapshot().await;
+        if matches!(
+            st.presence,
+            SidecarPresence::NotInstalled | SidecarPresence::Disabled
+        ) {
+            return Ok(vec![]);
+        }
         if !st.running && !st.healthy {
-            // Still try if process just came up.
             if self.health_check().await.is_err() {
                 return Err(anyhow!("subscription sidecar not running"));
             }
@@ -345,17 +421,72 @@ impl SidecarManager {
         let client = self.client().await;
         let accounts = client.list_auth_files().await?;
         let models = client.list_models().await.unwrap_or_default();
-        let s = self.settings.read().await;
-        let openai = self.paths.openai_base_url(&s);
-        self.seed_proxy_key_in_keychain(&s)?;
+        // If we see live accounts, force-enable so relaunch autostarts.
+        if !accounts.is_empty() {
+            let mut s = self.settings.write().await;
+            if !s.enabled {
+                s.enabled = true;
+                self.paths.save_settings(&s)?;
+            }
+        }
+        let (openai, overrides, settings_snap) = {
+            let s = self.settings.read().await;
+            (
+                self.paths.openai_base_url(&s),
+                s.model_overrides.clone(),
+                s.clone(),
+            )
+        };
+        let _ = self.seed_proxy_key_in_keychain(&settings_snap);
         let ids = sync_subscription_profiles(
             &self.registry,
             &accounts,
             &openai,
             PROXY_KEY_REF,
             &models,
+            &overrides,
         )?;
         Ok(ids)
+    }
+
+    /// List models exposed by the running sidecar (`GET /v1/models`).
+    pub async fn list_proxy_models(&self) -> Result<Vec<String>> {
+        let st = self.status_snapshot().await;
+        if !st.binary_present {
+            return Err(anyhow!("sidecar not installed"));
+        }
+        if matches!(st.presence, SidecarPresence::Disabled) {
+            return Err(anyhow!("subscriptions disabled"));
+        }
+        if self.health_check().await.is_err() {
+            // Try start once if enabled/auth.
+            let _ = self.maybe_autostart().await;
+        }
+        self.client().await.list_models().await
+    }
+
+    /// Persist a per-account model override and re-sync profiles.
+    pub async fn set_account_model_override(
+        &self,
+        account_id: &str,
+        model: &str,
+    ) -> Result<Vec<String>> {
+        {
+            let mut s = self.settings.write().await;
+            s.model_overrides
+                .insert(account_id.to_string(), model.to_string());
+            self.paths.save_settings(&s)?;
+        }
+        self.sync_profiles().await
+    }
+
+    pub async fn clear_account_model_override(&self, account_id: &str) -> Result<Vec<String>> {
+        {
+            let mut s = self.settings.write().await;
+            s.model_overrides.remove(account_id);
+            self.paths.save_settings(&s)?;
+        }
+        self.sync_profiles().await
     }
 
     /// Launch provider OAuth login (separate process; opens browser).
@@ -474,6 +605,94 @@ mod tests {
     use std::fs;
     use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[test]
+    fn has_auth_credentials_detects_json() {
+        let dir = tempdir().unwrap();
+        let auth = dir.path().join("auth");
+        fs::create_dir_all(&auth).unwrap();
+        let paths = SidecarPaths {
+            root: dir.path().to_path_buf(),
+            config_yaml: dir.path().join("config.yaml"),
+            auth_dir: auth.clone(),
+            settings_json: dir.path().join("settings.json"),
+            log_dir: dir.path().join("logs"),
+            binary: dir.path().join("missing.exe"),
+        };
+        assert!(!paths.has_auth_credentials());
+        fs::write(auth.join("claude-user.json"), "{}").unwrap();
+        assert!(paths.has_auth_credentials());
+    }
+
+    #[tokio::test]
+    async fn maybe_autostart_enables_when_auth_present() {
+        let dir = tempdir().unwrap();
+        let slots = dir.path().join("slots.json");
+        fs::write(
+            &slots,
+            r#"{"slots":{"worker":{"description":"w","backend":"openai_compatible","base_url":"http://x/v1","model":"m"}}}"#,
+        )
+        .unwrap();
+        let reg = Arc::new(SlotRegistry::open(&slots).unwrap());
+        let root = dir.path().join("cliproxy");
+        let auth = root.join("auth");
+        fs::create_dir_all(&auth).unwrap();
+        fs::write(auth.join("acct.json"), r#"{"type":"claude"}"#).unwrap();
+
+        let paths = SidecarPaths {
+            root: root.clone(),
+            config_yaml: root.join("config.yaml"),
+            auth_dir: auth,
+            settings_json: root.join("settings.json"),
+            log_dir: root.join("logs"),
+            binary: root.join("no-such-binary.exe"),
+        };
+        // Start with enabled=false on disk.
+        let mut settings = CliproxySettings::generate_fresh();
+        settings.enabled = false;
+        paths.save_settings(&settings).unwrap();
+
+        let mgr = Arc::new(SidecarManager::new(paths.clone(), settings, reg));
+        // ensure_running will fail (no binary) but enabled must still flip true.
+        let _ = mgr.maybe_autostart().await;
+        let disk: CliproxySettings =
+            serde_json::from_str(&fs::read_to_string(&paths.settings_json).unwrap()).unwrap();
+        assert!(
+            disk.enabled,
+            "expected enabled=true after auth-based autostart"
+        );
+        assert!(mgr.settings.read().await.enabled);
+    }
+
+    #[tokio::test]
+    async fn stop_does_not_clear_enabled_flag() {
+        let dir = tempdir().unwrap();
+        let slots = dir.path().join("slots.json");
+        fs::write(
+            &slots,
+            r#"{"slots":{"worker":{"description":"w","backend":"openai_compatible","base_url":"http://x/v1","model":"m"}}}"#,
+        )
+        .unwrap();
+        let reg = Arc::new(SlotRegistry::open(&slots).unwrap());
+        let root = dir.path().join("cliproxy");
+        fs::create_dir_all(root.join("auth")).unwrap();
+        let paths = SidecarPaths {
+            root: root.clone(),
+            config_yaml: root.join("config.yaml"),
+            auth_dir: root.join("auth"),
+            settings_json: root.join("settings.json"),
+            log_dir: root.join("logs"),
+            binary: root.join("missing.exe"),
+        };
+        let mut settings = CliproxySettings::generate_fresh();
+        settings.enabled = true;
+        paths.save_settings(&settings).unwrap();
+        let mgr = Arc::new(SidecarManager::new(paths.clone(), settings, reg));
+        mgr.stop().await.unwrap();
+        let disk: CliproxySettings =
+            serde_json::from_str(&fs::read_to_string(&paths.settings_json).unwrap()).unwrap();
+        assert!(disk.enabled, "stop() must not write enabled=false");
+    }
 
     #[tokio::test]
     async fn lifecycle_spawn_health_shutdown_with_stub() {

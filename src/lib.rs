@@ -20,7 +20,10 @@ pub use config::{
     SlotConfig, SlotsFile,
 };
 pub use conversation::ConversationStore;
-pub use core::{DelegateRequest, DelegateResult, Orchestrator, SlotBoardItem, WorkerUnavailableHook};
+pub use core::{
+    DelegateRequest, DelegateResult, McpSetupCommands, Orchestrator, SlotBoardItem,
+    WorkerUnavailableHook,
+};
 pub use error::{OrchestratorError, Result};
 pub use notify_debounce::{NotifyDebouncer, DEFAULT_WINDOW as NOTIFY_DEFAULT_WINDOW};
 pub use ollama::{discover_models, list_models_on_host, OllamaModel, DEFAULT_OLLAMA_HOST};

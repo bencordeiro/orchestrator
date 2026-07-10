@@ -56,6 +56,13 @@ pub struct SlotBoardItem {
 /// Optional hook when a worker becomes unavailable (tray notification, etc.).
 pub type WorkerUnavailableHook = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
+/// Ready-to-paste MCP setup commands for supported clients.
+#[derive(Debug, Clone, Serialize)]
+pub struct McpSetupCommands {
+    pub claude: String,
+    pub codex: String,
+}
+
 /// Headless orchestrator core shared by the binary and the Tauri GUI.
 #[derive(Clone)]
 pub struct Orchestrator {
@@ -178,6 +185,11 @@ impl Orchestrator {
 
     /// Build the Claude Code MCP setup command (includes bearer token).
     pub fn mcp_setup_command(&self, bearer_token: &str) -> Result<String> {
+        Ok(self.mcp_setup_commands(bearer_token)?.claude)
+    }
+
+    /// Setup commands for Claude Code and Codex CLI (same MCP endpoint + bearer).
+    pub fn mcp_setup_commands(&self, bearer_token: &str) -> Result<McpSetupCommands> {
         let cfg = self.registry.current()?;
         let listen = cfg.file.listen.clone();
         let host = if listen.starts_with("127.0.0.1:") {
@@ -185,9 +197,15 @@ impl Orchestrator {
         } else {
             listen
         };
-        Ok(format!(
-            "claude mcp add --transport http orchestrator http://{host}/mcp --header \"Authorization: Bearer {bearer_token}\""
-        ))
+        let url = format!("http://{host}/mcp");
+        let claude = format!(
+            "claude mcp add --transport http orchestrator {url} --header \"Authorization: Bearer {bearer_token}\""
+        );
+        // Codex HTTP MCP via mcp-remote stdio shim (header for bearer).
+        let codex = format!(
+            "codex mcp add orchestrator -- npx -y mcp-remote {url} --header \"Authorization: Bearer {bearer_token}\""
+        );
+        Ok(McpSetupCommands { claude, codex })
     }
 
     /// Delegate a task to the resolved slot backend.

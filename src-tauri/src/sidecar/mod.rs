@@ -11,5 +11,7 @@ mod profiles;
 
 pub use client::{classify_proxy_error, AuthAccount, CliProxyClient};
 pub use config::{CliproxySettings, SidecarPaths, PINNED_VERSION};
-pub use manager::{SidecarManager, SidecarStatus, OAUTH_PROVIDERS, PROXY_KEY_REF};
+pub use manager::{
+    SidecarManager, SidecarPresence, SidecarStatus, OAUTH_PROVIDERS, PROXY_KEY_REF,
+};
 pub use profiles::{profile_id_for_account, sync_subscription_profiles, DEFAULT_MODELS};
