@@ -33,11 +33,30 @@ const PROVIDER_MODEL_HINTS: Record<string, string[]> = {
   kimi: ['kimi'],
 }
 
+// Curated per-provider ids so day-one models are suggestable even before the
+// proxy lists them (July 2026). The input stays free-text for anything newer.
+const KNOWN_MODELS: Record<string, string[]> = {
+  xai: ['grok-4.5', 'grok-4.3', 'grok-4'],
+  grok: ['grok-4.5', 'grok-4.3', 'grok-4'],
+  antigravity: ['gemini-3.1-pro', 'gemini-3.1-flash', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+  gemini: ['gemini-3.1-pro', 'gemini-3.1-flash', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+  codex: ['gpt-5.5', 'gpt-5.1'],
+  openai: ['gpt-5.5', 'gpt-5.1'],
+  claude: ['claude-sonnet-5', 'claude-opus-4-8', 'claude-sonnet-4-5', 'claude-haiku-4-5'],
+  anthropic: ['claude-sonnet-5', 'claude-opus-4-8', 'claude-sonnet-4-5', 'claude-haiku-4-5'],
+  kimi: ['kimi-k2'],
+}
+
+// Strict grouping: only this provider's models (proxy-listed ∪ curated).
+// Unknown providers fall back to the full proxy list. Custom ids can always
+// be typed directly in the input.
 function modelsForProvider(provider: string, models: string[]): string[] {
-  const hints = PROVIDER_MODEL_HINTS[provider.toLowerCase()]
+  const p = provider.toLowerCase()
+  const hints = PROVIDER_MODEL_HINTS[p]
+  const curated = KNOWN_MODELS[p] ?? []
   if (!hints) return models
   const filtered = models.filter((m) => hints.some((h) => m.toLowerCase().includes(h)))
-  return filtered.length ? filtered : models
+  return [...new Set([...curated, ...filtered])]
 }
 
 export function AccountsView({ sidecar, accountsList, notify, refresh }: Props) {

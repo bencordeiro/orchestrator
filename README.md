@@ -21,7 +21,7 @@ Claude Code / Codex  --MCP HTTP-->  Orchestrator (tray)  --OpenAI/Anthropic-->  
 - **Two tools only:** `delegate` and `list_slots` (list never reveals vendor/model)
 - **Call-time slot resolve** — edit config or GUI; next `delegate` uses the new backend
 - **Conversation continuity** — history lives in Orchestrator, so threads survive slot swaps
-- **Backends:** any OpenAI-compatible URL (Ollama, proxies, …) + native Anthropic
+- **Backends:** any OpenAI-compatible URL (Ollama, proxies, …) + native Anthropic — see [docs/BACKENDS.md](docs/BACKENDS.md) for recipes (z.ai coding plan, Ollama, API keys)
 - **Optional CLIProxyAPI sidecar** for subscription OAuth → local OpenAI-compatible API
 - **Tray app** (Windows): slot board, accounts, Ollama discovery, usage log, manual update check
 
