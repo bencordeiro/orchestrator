@@ -76,7 +76,7 @@ impl OrchestratorMcp {
 
     /// Delegate a task to a named worker slot. Slot is resolved at call time.
     #[tool(
-        description = "Delegate a task to a worker model behind a named slot (default: worker). Returns the worker response and a conversation_id for optional follow-ups. Omit conversation_id for a fresh job; pass a prior conversation_id to continue that thread. On backend/auth/quota errors returns a clear 'worker unavailable' message — no automatic slot switching."
+        description = "Delegate a task to a worker model behind a named slot (default: worker). IMPORTANT: the worker cannot see your conversation, files, or tools — it receives ONLY what you put in this call. Write `task` as a complete, self-contained brief: state the goal, include all necessary code/data/context inline (use `context` for bulk material), specify the expected output format, and give concrete acceptance criteria. Be concise but leave nothing to be inferred. Returns the worker response and a conversation_id. Omit conversation_id for a fresh stateless job (preferred for independent tasks); pass a prior conversation_id only for genuinely multi-step work — the full thread history is re-sent to the worker on every continued call. On backend/auth/quota errors returns a clear 'worker unavailable' message — no automatic slot switching; report the failure and let the user swap the slot."
     )]
     async fn delegate(
         &self,
@@ -140,7 +140,7 @@ impl ServerHandler for OrchestratorMcp {
             ))
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
-                "Slot-based model delegation. Use `list_slots` to see workers, then `delegate` to send tasks. Pass conversation_id to continue a thread. Slot backends can be hot-swapped server-side without restarting this MCP session."
+                "Slot-based model delegation. Use `list_slots` to see workers, then `delegate` to send tasks. Workers are capable but context-blind: they see only what you send, so invest in a precise, self-contained brief — that is the main driver of result quality. Prefer fresh stateless jobs; use conversation_id only for multi-step threads. Slot backends can be hot-swapped server-side without restarting this MCP session."
                     .to_string(),
             )
     }
