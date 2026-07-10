@@ -20,6 +20,26 @@ const PROVIDER_LABELS: Record<string, string> = {
   xai: 'Grok (xAI)',
 }
 
+// Keywords used to filter the global proxy model list down to an account's provider.
+const PROVIDER_MODEL_HINTS: Record<string, string[]> = {
+  claude: ['claude'],
+  anthropic: ['claude'],
+  codex: ['gpt', 'codex', 'o1', 'o3', 'o4'],
+  openai: ['gpt', 'codex', 'o1', 'o3', 'o4'],
+  antigravity: ['gemini'],
+  gemini: ['gemini'],
+  xai: ['grok'],
+  grok: ['grok'],
+  kimi: ['kimi'],
+}
+
+function modelsForProvider(provider: string, models: string[]): string[] {
+  const hints = PROVIDER_MODEL_HINTS[provider.toLowerCase()]
+  if (!hints) return models
+  const filtered = models.filter((m) => hints.some((h) => m.toLowerCase().includes(h)))
+  return filtered.length ? filtered : models
+}
+
 export function AccountsView({ sidecar, accountsList, notify, refresh }: Props) {
   const [providers, setProviders] = useState<string[]>([])
   const [provider, setProvider] = useState('antigravity')
@@ -166,17 +186,18 @@ export function AccountsView({ sidecar, accountsList, notify, refresh }: Props) 
                     <Pill tone={a.unavailable ? 'err' : 'ok'}>{a.status || 'active'}</Pill>
                   </div>
                   <div className="account-actions">
-                    <select
+                    <input
+                      className="model-pin-input"
+                      list={`models-${a.id}`}
+                      placeholder="pin model — pick or type any id (e.g. grok-4.5)"
                       value={pendingModel[a.id] ?? ''}
                       onChange={(e) => setPendingModel((m) => ({ ...m, [a.id]: e.target.value }))}
-                    >
-                      <option value="">pin model…</option>
-                      {models.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
+                    />
+                    <datalist id={`models-${a.id}`}>
+                      {modelsForProvider(a.provider, models).map((m) => (
+                        <option key={m} value={m} />
                       ))}
-                    </select>
+                    </datalist>
                     <button className="btn btn-sm" onClick={() => applyOverride(a.id)} disabled={!pendingModel[a.id]}>
                       Pin
                     </button>
