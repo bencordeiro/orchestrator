@@ -102,7 +102,14 @@ if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
 
 # UI is pre-built above; tauri.conf beforeBuildCommand is empty to avoid cwd issues.
 # Discover project from repo root (src-tauri/tauri.conf.json).
-npx --yes @tauri-apps/cli build --bundles nsis,msi
+# Without a signing key, disable updater artifacts — otherwise the CLI errors
+# ("public key found, but no private key") AFTER bundling and fails the build.
+if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+  npx --yes @tauri-apps/cli build --bundles nsis,msi
+} else {
+  Write-Host "No signing key - building without updater artifacts." -ForegroundColor Yellow
+  npx --yes @tauri-apps/cli build --bundles nsis,msi --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'
+}
 $buildCode = $LASTEXITCODE
 if ($buildCode -ne 0) { throw "tauri build failed with exit $buildCode" }
 
