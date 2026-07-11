@@ -7,6 +7,7 @@ pub mod config;
 pub mod conversation;
 pub mod core;
 pub mod error;
+pub mod jobs;
 pub mod mcp;
 pub mod notify_debounce;
 pub mod ollama;
@@ -25,6 +26,7 @@ pub use core::{
     WorkerUnavailableHook,
 };
 pub use error::{OrchestratorError, Result};
+pub use jobs::{JobState, JobStore, JobView};
 pub use notify_debounce::{NotifyDebouncer, DEFAULT_WINDOW as NOTIFY_DEFAULT_WINDOW};
 pub use ollama::{discover_models, list_models_on_host, OllamaModel, DEFAULT_OLLAMA_HOST};
 pub use registry::{PublicSlot, SlotRegistry};

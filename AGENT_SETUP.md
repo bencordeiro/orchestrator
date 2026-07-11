@@ -56,6 +56,11 @@ of worker models you can delegate tasks to. Use it like this:
   `context` field for bulk material), specify the exact output format you
   want, and give concrete acceptance criteria. Be concise, but leave nothing
   to be inferred.
+- For anything that may generate for more than ~1 minute, pass
+  **`background: true`** — you get a `job_id` back instantly and keep working;
+  fetch the result later with `job_result(job_id)`. Poll occasionally (not in
+  a tight loop). This is immune to tool-call timeouts. Never cancel-and-retry
+  a foreground call that seems slow; long waits are normal generation time.
 - Prefer **fresh stateless jobs** (omit `conversation_id`) for independent
   tasks. Pass a previous `conversation_id` only when the worker genuinely
   needs to remember its own earlier output (e.g. draft → critique → revise);

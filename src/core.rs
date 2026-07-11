@@ -72,6 +72,7 @@ pub struct Orchestrator {
     status: Arc<StatusBoard>,
     usage: Option<Arc<UsageLog>>,
     on_unavailable: Option<WorkerUnavailableHook>,
+    jobs: Arc<crate::jobs::JobStore>,
     http: reqwest::Client,
     /// When true, include `backend_id` in results (tests / debug).
     pub expose_backend_id: bool,
@@ -90,6 +91,7 @@ impl Orchestrator {
             status: Arc::new(StatusBoard::new()),
             usage: None,
             on_unavailable: None,
+            jobs: Arc::new(crate::jobs::JobStore::new()),
             // Connect fast-fails on dead backends; NO overall request timeout —
             // long generations (minutes) are legitimate and must not be killed.
             http: reqwest::Client::builder()
@@ -134,6 +136,33 @@ impl Orchestrator {
 
     pub fn secrets(&self) -> &dyn SecretStore {
         self.secrets.as_ref()
+    }
+
+    pub fn jobs(&self) -> &crate::jobs::JobStore {
+        &self.jobs
+    }
+
+    /// Start a delegation as a background job; returns the job id immediately.
+    ///
+    /// The generation runs in a spawned task; no connection stays open, so no
+    /// client-side tool timeout can kill it. Poll with `jobs().get(id)`.
+    pub fn delegate_background(&self, req: DelegateRequest) -> String {
+        let slot_name = req
+            .slot
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("worker")
+            .to_string();
+        let job_id = self.jobs.start(&slot_name);
+        let this = self.clone();
+        let id = job_id.clone();
+        tokio::spawn(async move {
+            match this.delegate(req).await {
+                Ok(result) => this.jobs.complete(&id, &result),
+                Err(e) => this.jobs.fail(&id, e.to_caller_message()),
+            }
+        });
+        job_id
     }
 
     pub fn http(&self) -> &reqwest::Client {

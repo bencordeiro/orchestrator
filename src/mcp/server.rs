@@ -60,6 +60,16 @@ pub struct DelegateArgs {
     /// Optional list of file paths/names for the worker to consider.
     #[serde(default)]
     pub files: Option<Vec<String>>,
+    /// Run as a background job: returns a job_id immediately; poll `job_result`.
+    /// Use for anything that may generate for more than ~1 minute.
+    #[serde(default)]
+    pub background: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct JobResultArgs {
+    /// The job_id returned by a background delegate call.
+    pub job_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -76,7 +86,7 @@ impl OrchestratorMcp {
 
     /// Delegate a task to a named worker slot. Slot is resolved at call time.
     #[tool(
-        description = "Delegate a task to a worker model behind a named slot (default: worker). IMPORTANT: the worker cannot see your conversation, files, or tools — it receives ONLY what you put in this call. Write `task` as a complete, self-contained brief: state the goal, include all necessary code/data/context inline (use `context` for bulk material), specify the expected output format, and give concrete acceptance criteria. Be concise but leave nothing to be inferred. Returns the worker response and a conversation_id. Omit conversation_id for a fresh stateless job (preferred for independent tasks); pass a prior conversation_id only for genuinely multi-step work — the full thread history is re-sent to the worker on every continued call. On backend/auth/quota errors returns a clear 'worker unavailable' message — no automatic slot switching; report the failure and let the user swap the slot. Large tasks may legitimately take several minutes to return — a long wait is normal generation time, NOT a stall; do not cancel and retry, as that aborts the in-flight job. Concurrent delegations are supported."
+        description = "Delegate a task to a worker model behind a named slot (default: worker). IMPORTANT: the worker cannot see your conversation, files, or tools — it receives ONLY what you put in this call. Write `task` as a complete, self-contained brief: state the goal, include all necessary code/data/context inline (use `context` for bulk material), specify the expected output format, and give concrete acceptance criteria. Be concise but leave nothing to be inferred. Returns the worker response and a conversation_id. Omit conversation_id for a fresh stateless job (preferred for independent tasks); pass a prior conversation_id only for genuinely multi-step work — the full thread history is re-sent to the worker on every continued call. On backend/auth/quota errors returns a clear 'worker unavailable' message — no automatic slot switching; report the failure and let the user swap the slot. Large tasks may legitimately take several minutes to return — a long wait is normal generation time, NOT a stall; do not cancel and retry, as that aborts the in-flight job. Concurrent delegations are supported. RECOMMENDED for heavy tasks: pass background=true — you get a job_id back instantly, keep working, and fetch the result later with job_result; this is immune to client tool timeouts."
     )]
     async fn delegate(
         &self,
@@ -89,6 +99,18 @@ impl OrchestratorMcp {
             context: args.context,
             files: args.files,
         };
+
+        if args.background.unwrap_or(false) {
+            let job_id = self.orchestrator.delegate_background(req);
+            let payload = json!({
+                "job_id": job_id,
+                "status": "running",
+                "note": "Background job started. Fetch the result with job_result(job_id). Heavy generations can take minutes; poll occasionally, do not busy-loop."
+            });
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                payload.to_string(),
+            )]));
+        }
 
         match self.orchestrator.delegate(req).await {
             Ok(result) => {
@@ -105,6 +127,28 @@ impl OrchestratorMcp {
                 let msg = e.to_caller_message();
                 Ok(CallToolResult::error(vec![ContentBlock::text(msg)]))
             }
+        }
+    }
+
+    /// Fetch the status/result of a background delegation.
+    #[tool(
+        description = "Get the status and result of a background delegate job by job_id. Returns status running (keep waiting — heavy generations can take minutes), done (with conversation_id and the worker's response), or failed (with the error). Finished results stay retrievable for 6 hours."
+    )]
+    async fn job_result(
+        &self,
+        Parameters(args): Parameters<JobResultArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.orchestrator.jobs().get(&args.job_id) {
+            Some(view) => {
+                let payload = serde_json::to_string(&view).unwrap_or_else(|e| {
+                    json!({ "status": "failed", "error": format!("serialize: {e}") }).to_string()
+                });
+                Ok(CallToolResult::success(vec![ContentBlock::text(payload)]))
+            }
+            None => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "unknown job_id '{}' — jobs do not survive an app restart, and finished results expire after 6 hours",
+                args.job_id
+            ))])),
         }
     }
 
@@ -140,7 +184,7 @@ impl ServerHandler for OrchestratorMcp {
             ))
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
-                "Slot-based model delegation. Use `list_slots` to see workers, then `delegate` to send tasks. Workers are capable but context-blind: they see only what you send, so invest in a precise, self-contained brief — that is the main driver of result quality. Prefer fresh stateless jobs; use conversation_id only for multi-step threads. Slot backends can be hot-swapped server-side without restarting this MCP session."
+                "Slot-based model delegation. Use `list_slots` to see workers, then `delegate` to send tasks. Workers are capable but context-blind: they see only what you send, so invest in a precise, self-contained brief — that is the main driver of result quality. Prefer fresh stateless jobs; use conversation_id only for multi-step threads. For heavy tasks pass background=true and fetch with job_result — immune to client timeouts. Slot backends can be hot-swapped server-side without restarting this MCP session."
                     .to_string(),
             )
     }
