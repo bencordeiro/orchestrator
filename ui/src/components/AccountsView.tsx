@@ -221,6 +221,11 @@ export function AccountsView({ sidecar, accountsList, notify, refresh }: Props) 
                     <button className="btn btn-sm" onClick={() => applyOverride(a.id)} disabled={!pendingModel[a.id]}>
                       Pin
                     </button>
+                    {pendingModel[a.id] && models.length > 0 && !models.includes(pendingModel[a.id]) && (
+                      <span className="pin-warning" title="The relay's /v1/models list doesn't report this id. Pinning still works, but calls may fail with 'unknown provider'.">
+                        ⚠ not reported by relay
+                      </span>
+                    )}
                     <button className="btn btn-ghost btn-sm" onClick={() => clearOverride(a.id)}>
                       Auto
                     </button>

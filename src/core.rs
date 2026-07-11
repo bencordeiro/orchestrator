@@ -90,7 +90,13 @@ impl Orchestrator {
             status: Arc::new(StatusBoard::new()),
             usage: None,
             on_unavailable: None,
-            http: reqwest::Client::new(),
+            // Connect fast-fails on dead backends; NO overall request timeout —
+            // long generations (minutes) are legitimate and must not be killed.
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .build()
+                .expect("http client"),
             expose_backend_id: false,
         }
     }
