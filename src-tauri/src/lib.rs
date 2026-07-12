@@ -41,6 +41,15 @@ pub fn run() {
     let _rt_guard = Arc::new(rt);
 
     tauri::Builder::default()
+        // Second launch focuses the existing window instead of silently dying
+        // on the already-bound MCP port. MUST be the first plugin registered.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec![]),
