@@ -135,7 +135,10 @@ impl LoadedConfig {
         let raw = fs::read_to_string(&path).map_err(|e| {
             OrchestratorError::Config(format!("failed to read {}: {e}", path.display()))
         })?;
-        let file: SlotsFile = serde_json::from_str(&raw).map_err(|e| {
+        // Tolerate a UTF-8 BOM — Windows editors and PowerShell 5.1's
+        // `-Encoding utf8` prepend one, and it must not brick startup.
+        let raw = raw.trim_start_matches('\u{FEFF}');
+        let file: SlotsFile = serde_json::from_str(raw).map_err(|e| {
             OrchestratorError::Config(format!("invalid slots.json at {}: {e}", path.display()))
         })?;
         let modified = fs::metadata(&path).and_then(|m| m.modified()).ok();
