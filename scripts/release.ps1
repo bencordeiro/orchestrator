@@ -132,12 +132,14 @@ $appExe = Join-Path $RepoRoot "src-tauri\target\release\orchestrator-app.exe"
 if (-not $SkipSmoke) {
   Write-Host ""
   Write-Host "=== Smoke: launch release binary, hit /health ===" -ForegroundColor Cyan
+  $portBusy = Get-NetTCPConnection -LocalPort 7420 -ErrorAction SilentlyContinue
   if (-not (Test-Path $appExe)) {
     Write-Host "Release app binary missing at $appExe - smoke skipped" -ForegroundColor Yellow
+  } elseif ($portBusy) {
+    # NEVER kill the port owner: it is likely the user's live installed app,
+    # possibly mid-delegation (in-memory background jobs die with it).
+    Write-Host "Port 7420 already in use (running Orchestrator instance) - smoke skipped to avoid killing it" -ForegroundColor Yellow
   } else {
-    Get-NetTCPConnection -LocalPort 7420 -ErrorAction SilentlyContinue | ForEach-Object {
-      Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
-    }
     $proc = Start-Process -FilePath $appExe -WorkingDirectory $RepoRoot -PassThru -WindowStyle Hidden
     $ok = $false
     for ($i = 0; $i -lt 30; $i++) {
