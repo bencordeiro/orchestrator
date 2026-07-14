@@ -12,10 +12,17 @@ the usage prompt below. Get your real endpoint + bearer token from the app:
 claude mcp add --transport http orchestrator http://localhost:7420/mcp --header "Authorization: Bearer <TOKEN>"
 ```
 
-**Codex CLI**
+**Codex CLI** — add to `~/.codex/config.toml` (native streamable HTTP;
+avoid the `npx mcp-remote` stdio shim — its long-lived connection can go
+stale during long idle stretches and hang calls indefinitely):
 
-```
-codex mcp add orchestrator -- npx -y mcp-remote http://localhost:7420/mcp --header "Authorization: Bearer <TOKEN>"
+```toml
+[mcp_servers.orchestrator]
+url = "http://localhost:7420/mcp"
+tool_timeout_sec = 600
+
+[mcp_servers.orchestrator.http_headers]
+"Authorization" = "Bearer <TOKEN>"
 ```
 
 **Any other MCP client** (project `.mcp.json` or equivalent config):

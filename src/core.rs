@@ -236,9 +236,11 @@ impl Orchestrator {
         let claude = format!(
             "claude mcp add --transport http orchestrator {url} --header \"Authorization: Bearer {bearer_token}\""
         );
-        // Codex HTTP MCP via mcp-remote stdio shim (header for bearer).
+        // Codex native streamable HTTP: a config.toml snippet to paste, not a
+        // CLI command — the npx/mcp-remote stdio shim is avoided because its
+        // long-lived connection can go stale and hang calls indefinitely.
         let codex = format!(
-            "codex mcp add orchestrator -- npx -y mcp-remote {url} --header \"Authorization: Bearer {bearer_token}\""
+            "# Add to ~/.codex/config.toml\n[mcp_servers.orchestrator]\nurl = \"{url}\"\ntool_timeout_sec = 600\n\n[mcp_servers.orchestrator.http_headers]\n\"Authorization\" = \"Bearer {bearer_token}\""
         );
         Ok(McpSetupCommands { claude, codex })
     }
