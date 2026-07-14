@@ -1,6 +1,6 @@
 [package]
 name = "orchestrator-app"
-version = "0.1.0"
+version = "0.1.9"
 description = "Orchestrator desktop GUI (Tauri 2) — embeds M1 MCP core"
 authors = ["Ben"]
 edition = "2021"
