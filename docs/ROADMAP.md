@@ -10,10 +10,19 @@ strike items as they land.
 - [ ] **Startup failure → visible error dialog.** Today a bad config or bound
   port panics and the app silently never appears (the BOM incident). Users
   must see *why* it didn't start.
+- [ ] **File-based logging + "Open logs" in Settings.** The installed app logs
+  only to an invisible stderr; the "it doesn't run" saga required manual
+  stderr capture to find the panic. Add a rotating log file in the app
+  config dir (tracing already in place — add a file writer) so "what do the
+  logs say?" has an answer for remote users.
 - [ ] **Persist background jobs to disk** (or at minimum mark orphaned ids).
   In-memory jobs die silently with the process; a killed app should leave
   `job_result` able to say "lost to restart — re-delegate" instead of
   "unknown id".
+- [ ] **Job cancellation**: `cancel_job(job_id)` MCP tool + cancel button in
+  the GUI job list. Today a runaway/mistaken background job can only be
+  stopped by killing the whole app — which kills every other job with it.
+  Abort the in-flight backend request; mark the job Failed("cancelled").
 - [ ] **Adopt or kill orphaned sidecar on startup.** A force-killed app leaves
   `cli-proxy-api.exe` running, which blocks reinstall (file lock) and can
   serve stale auth. Detect on boot; reattach or terminate.
@@ -49,7 +58,18 @@ strike items as they land.
   after context loss (GUI-only today).
 - [ ] Usage dashboard: per-slot/backend token + latency stats from
   usage.jsonl rendered in Activity tab.
-- [ ] Optional per-job token/cost caps.
+- [ ] Optional per-slot max-concurrency cap: N simultaneous requests per
+  backend before new delegations queue, so an agent fanning out background
+  jobs can't trip provider rate limits. Off by default (unlimited), user-set
+  only — consistent with the no-automatic-behavior invariant.
+- [ ] Bearer-token rotation button in Settings that regenerates the token
+  and re-renders both setup snippets — rotating today means manually
+  editing every client config (the token-confusion saga).
+- [ ] **Pause toggle (tray + GUI)**: one click stops accepting delegations —
+  tools return a clear "workers paused by user" instead of executing.
+  Motivated by dogfooding: globally-registered MCP + global agent
+  instructions means *every* session in every project may delegate;
+  sometimes the user wants that off without editing client configs.
 
 ## Providers
 
