@@ -20,16 +20,50 @@ use state::{default_config_path, AppState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let config_path = default_config_path();
+
+    // Rotating log file (daily, capped at 7 files) under the app config dir, in
+    // addition to stderr. Installed apps have no visible console, so this file is
+    // the only way to diagnose a bad launch. Building it must never itself fail
+    // startup — fall back to stderr-only if the file can't be opened.
+    let log_dir = state::log_dir(&config_path);
+    let _ = std::fs::create_dir_all(&log_dir);
+    let (file_layer, _log_guard) = match tracing_appender::rolling::RollingFileAppender::builder()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("orchestrator")
+        .filename_suffix("log")
+        .max_log_files(7)
+        .build(&log_dir)
+    {
+        Ok(appender) => {
+            let (writer, guard) = tracing_appender::non_blocking(appender);
+            (
+                Some(
+                    tracing_subscriber::fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(writer),
+                ),
+                Some(guard),
+            )
+        }
+        Err(_) => (None, None),
+    };
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "orchestrator=info,orchestrator_app=info,rmcp=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
+        .with(file_layer)
         .init();
 
-    let config_path = default_config_path();
-    tracing::info!("slots config: {}", config_path.display());
+    tracing::info!(
+        "Orchestrator v{} starting; slots config: {}; logs: {}",
+        env!("CARGO_PKG_VERSION"),
+        config_path.display(),
+        log_dir.display()
+    );
 
     // Bootstrap orchestrator + MCP on a multi-thread runtime before Tauri starts.
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -62,6 +96,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_server_info,
             commands::get_slot_board,
+            commands::open_log_dir,
             commands::get_backend_profiles,
             commands::swap_slot_backend,
             commands::add_slot,

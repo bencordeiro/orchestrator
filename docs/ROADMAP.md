@@ -10,11 +10,6 @@ strike items as they land.
 - [ ] **Startup failure → visible error dialog.** Today a bad config or bound
   port panics and the app silently never appears (the BOM incident). Users
   must see *why* it didn't start.
-- [ ] **File-based logging + "Open logs" in Settings.** The installed app logs
-  only to an invisible stderr; the "it doesn't run" saga required manual
-  stderr capture to find the panic. Add a rotating log file in the app
-  config dir (tracing already in place — add a file writer) so "what do the
-  logs say?" has an answer for remote users.
 - [ ] **Persist background jobs to disk** (or at minimum mark orphaned ids).
   In-memory jobs die silently with the process; a killed app should leave
   `job_result` able to say "lost to restart — re-delegate" instead of
@@ -103,6 +98,10 @@ BACKENDS.md (z.ai coding plan, Ollama, generic OpenAI-compatible).
 
 ## Done (recent)
 
+- [x] 0.1.10 — File-based logging: rotating daily log (7-file cap) under the app
+  config dir alongside stderr, plus an "Open logs folder" button in Settings.
+  Installed apps have no console; this is the diagnostic trail the "it doesn't
+  run" saga lacked. Fails safe (stderr-only) if the file can't be opened.
 - [x] 0.1.9 — Codex native streamable HTTP setup (npx/mcp-remote shim removed
   from product), BOM-tolerant config, single-instance guard, versioning
   policy adopted.

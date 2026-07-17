@@ -50,6 +50,14 @@ export function SettingsView({ server, commands, autostart, setAutostart, notify
     }
   }
 
+  async function openLogs() {
+    try {
+      await api.openLogDir()
+    } catch (e) {
+      notify(String(e), true)
+    }
+  }
+
   return (
     <>
       <Section
@@ -83,6 +91,12 @@ export function SettingsView({ server, commands, autostart, setAutostart, notify
                 )}
               </span>
             )}
+          </div>
+          <div className="row">
+            <button className="btn" onClick={openLogs}>
+              Open logs folder
+            </button>
+            <span className="dim">Diagnostics for troubleshooting — share these if something misbehaves.</span>
           </div>
         </div>
       </Section>

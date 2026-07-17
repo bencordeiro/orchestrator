@@ -99,6 +99,7 @@ export type UpdateCheck = {
 export const api = {
   serverInfo: () => invoke<ServerInfo>('get_server_info'),
   slotBoard: () => invoke<SlotBoardItem[]>('get_slot_board'),
+  openLogDir: () => invoke<string>('open_log_dir'),
   profiles: () => invoke<BackendProfileView[]>('get_backend_profiles'),
   setupCommands: () => invoke<McpSetupCommands>('get_mcp_setup_commands'),
 

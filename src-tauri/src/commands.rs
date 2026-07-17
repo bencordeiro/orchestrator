@@ -65,6 +65,25 @@ pub fn get_slot_board(state: State<'_, AppState>) -> Result<Vec<SlotBoardItem>, 
     state.orchestrator.slot_board().map_err(map_err)
 }
 
+/// Open the rotating-log directory in the OS file manager. Returns its path.
+#[tauri::command]
+pub fn open_log_dir(state: State<'_, AppState>) -> Result<String, String> {
+    let dir = crate::state::log_dir(&state.config_path);
+    std::fs::create_dir_all(&dir).map_err(map_err)?;
+
+    #[cfg(target_os = "windows")]
+    let spawned = std::process::Command::new("explorer").arg(&dir).spawn();
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(&dir).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(&dir).spawn();
+
+    // explorer.exe returns a non-zero exit code even on success, so only the
+    // spawn failing (file manager missing) is a real error worth surfacing.
+    spawned.map_err(map_err)?;
+    Ok(dir.display().to_string())
+}
+
 #[tauri::command]
 pub fn get_backend_profiles(state: State<'_, AppState>) -> Result<Vec<BackendProfileView>, String> {
     let profiles = state.orchestrator.backend_profiles().map_err(map_err)?;

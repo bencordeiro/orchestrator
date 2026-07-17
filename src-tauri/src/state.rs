@@ -142,6 +142,11 @@ fn usage_log_path(slots_config: &std::path::Path) -> PathBuf {
     app_data_root(slots_config).join("usage.jsonl")
 }
 
+/// Directory for rotating log files (under the app config dir).
+pub fn log_dir(slots_config: &std::path::Path) -> PathBuf {
+    app_data_root(slots_config).join("logs")
+}
+
 fn ollama_hosts_path(slots_config: &std::path::Path) -> PathBuf {
     app_data_root(slots_config).join("ollama_hosts.json")
 }
