@@ -1,17 +1,47 @@
 # Orchestrator
 
-**Hot-swappable worker slots for any MCP client** (Claude Code, Codex CLI, and friends).
+**One delegation tool. Any model. Switch live.**
 
-Your main agent keeps one stable tool — `delegate` — while **you** decide which model/backend sits behind the `worker` (or `reviewer`, …) slot. Swap backends mid-session from a tray app **without** restarting MCP and **without** the main model needing to know the vendor.
-
-```
-Claude Code / Codex  --MCP HTTP-->  Orchestrator (tray)  --OpenAI/Anthropic-->  worker backends
-                                         │
-                                    slots.json (hot reload)
-                                    Ollama · API keys · CLIProxyAPI subscriptions
-```
+Orchestrator is a local MCP server and tray app that gives Claude Code, Codex,
+and other MCP clients stable AI worker roles. Your client delegates to a name
+such as `worker` or `reviewer`; you decide which model and provider currently
+fills that role—and can change it without reconnecting the client or losing the
+conversation.
 
 ![Orchestrator slot management interface](docs/orchestrator-ui.png)
+
+## Why Orchestrator?
+
+AI clients normally couple a workflow to one provider or model. Changing it can
+mean editing configuration, restarting MCP, and teaching the main agent about
+vendor-specific details. Orchestrator puts a small, local routing layer between
+the client and its workers:
+
+1. **Connect once** — your MCP client gets a stable `delegate` tool.
+2. **Delegate by role** — send work to named slots such as `worker` or `reviewer`.
+3. **Choose the backend yourself** — assign Ollama, Anthropic, or any
+   OpenAI-compatible endpoint from the tray app.
+4. **Switch live** — the next call uses the new backend while existing
+   conversation history remains available.
+
+The client only needs to know what each slot is for. Provider names, model IDs,
+credentials, and routing decisions stay inside Orchestrator.
+
+## How it works
+
+```
+Claude Code · Codex · any MCP client
+                 │
+          delegate("worker")
+                 │
+                 ▼
+        Orchestrator on localhost
+          │              │
+     worker slot     reviewer slot
+          │              │
+          ▼              ▼
+   Ollama / API      Anthropic / proxy
+```
 
 ## Features
 
