@@ -29,8 +29,23 @@ pub struct AppState {
     pub ollama_hosts_path: PathBuf,
 }
 
+/// Shared slot the shutdown signal handler reads the sidecar out of.
+///
+/// Populated the instant the manager is constructed — see [`AppState::bootstrap`].
+pub type SidecarSlot = Arc<std::sync::Mutex<Option<Arc<SidecarManager>>>>;
+
 impl AppState {
-    pub async fn bootstrap(config_path: PathBuf) -> anyhow::Result<Self> {
+    /// Bootstrap the orchestrator, MCP server and sidecar.
+    ///
+    /// `sidecar_slot` is filled as soon as the [`SidecarManager`] exists and
+    /// *before* it is started, so a shutdown signal arriving mid-startup can
+    /// still stop the child process. Filling it after this function returns
+    /// left a window in which the sidecar was already spawned but unreachable
+    /// by the signal handler, and it leaked as an orphan holding its port.
+    pub async fn bootstrap(
+        config_path: PathBuf,
+        sidecar_slot: Option<SidecarSlot>,
+    ) -> anyhow::Result<Self> {
         if !config_path.exists() {
             write_example_if_missing(&config_path)?;
             tracing::info!("created example config at {}", config_path.display());
@@ -101,6 +116,11 @@ impl AppState {
         });
         let _ = paths.write_proxy_config(&settings);
         let sidecar = Arc::new(SidecarManager::new(paths, settings, registry));
+        // Publish BEFORE autostart: from here on a shutdown signal can reach
+        // and stop whatever the next line spawns.
+        if let Some(slot) = &sidecar_slot {
+            *slot.lock().unwrap() = Some(sidecar.clone());
+        }
         // Always attempt autostart when credentials / sub-profiles exist.
         // Errors (e.g. missing binary) are logged but must not leave enabled=false
         // if auth files are present — maybe_autostart persists enabled=true first.

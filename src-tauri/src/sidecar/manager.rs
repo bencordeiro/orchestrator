@@ -235,8 +235,13 @@ impl SidecarManager {
         }
         if !self.paths.binary.exists() {
             return Err(anyhow!(
-                "CLIProxyAPI binary not found at {} — run scripts/download-cliproxy.ps1 (pinned {})",
+                "CLIProxyAPI binary not found at {} — run {} (pinned {})",
                 self.paths.binary.display(),
+                if cfg!(windows) {
+                    "scripts/download-cliproxy.ps1"
+                } else {
+                    "scripts/download-cliproxy.sh"
+                },
                 super::config::PINNED_VERSION
             ));
         }

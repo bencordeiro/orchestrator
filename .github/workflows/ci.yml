@@ -13,10 +13,33 @@ env:
 
 jobs:
   test:
-    name: test-windows
-    runs-on: windows-latest
+    name: test-${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+          - name: linux
+            os: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
+      # Tauri v2 system deps. libdbus-1-dev is required by the keyring crate's
+      # Secret Service backend (see the per-target keyring features in
+      # Cargo.toml) — without it the core crate will not link on Linux.
+      - name: Install Linux system deps
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            libdbus-1-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -31,6 +54,7 @@ jobs:
       - name: Cache cargo
         uses: swatinem/rust-cache@v2
         with:
+          key: ${{ matrix.name }}
           workspaces: |
             .
             src-tauri
@@ -51,14 +75,39 @@ jobs:
         run: npm run build
 
   release:
-    name: release-windows
+    name: release-${{ matrix.name }}
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            bundles: nsis,msi
+          - name: linux
+            # Build on the oldest supported runner: glibc is forward- but not
+            # backward-compatible, so a newer runner would produce binaries that
+            # refuse to start on older distros.
+            os: ubuntu-22.04
+            bundles: deb,appimage
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux system deps
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            libdbus-1-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -72,22 +121,30 @@ jobs:
 
       - name: Cache cargo
         uses: swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
 
       - name: Download CLIProxyAPI sidecar (checksummed)
+        if: matrix.name == 'windows'
         shell: pwsh
         run: ./scripts/download-cliproxy.ps1
+
+      - name: Download CLIProxyAPI sidecar (checksummed)
+        if: matrix.name == 'linux'
+        run: ./scripts/download-cliproxy.sh
 
       - name: Install UI deps
         working-directory: ui
         run: npm ci
 
-      - name: Tauri build (NSIS + MSI)
+      - name: Tauri build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx --yes @tauri-apps/cli build --bundles nsis,msi
+        run: npx --yes @tauri-apps/cli build --bundles ${{ matrix.bundles }}
 
-      - name: Upload release artifacts
+      - name: Upload release artifacts (windows)
+        if: matrix.name == 'windows'
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -95,5 +152,18 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.sig
             src-tauri/target/release/*.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Only the AppImage carries updater .sig artifacts on Linux — the Tauri
+      # updater cannot install a .deb.
+      - name: Upload release artifacts (linux)
+        if: matrix.name == 'linux'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

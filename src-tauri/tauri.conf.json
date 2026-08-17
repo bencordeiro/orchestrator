@@ -26,7 +26,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": "all",
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
@@ -36,7 +36,7 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/cli-proxy-api"
+      "binaries/orchestrator-cli-proxy-api"
     ],
     "windows": {
       "nsis": {

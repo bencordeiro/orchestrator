@@ -21,7 +21,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 eventsource-stream = "0.2"
 futures = "0.3"
-keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
+keyring = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 rmcp = { version = "2", features = [
     "server",
@@ -38,6 +38,25 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+
+# Keyring backends are per-target so each OS gets a *persistent* credential
+# store and no platform pulls another's transport deps.
+#
+# Linux note: the plain `linux-native` feature is the kernel keyutils backend,
+# which lives in RAM and is wiped on reboot — that silently regenerated the MCP
+# bearer token (breaking every client config with a 401) and dropped all API
+# keys on each boot. `linux-native-sync-persistent` keeps keyutils as a fast
+# cache but persists through the Secret Service (gnome-keyring/KWallet).
+# `crypto-rust` keeps the DBus session encryption pure-Rust so packaging does
+# not gain a system OpenSSL dependency.
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
 
 [dev-dependencies]
 tempfile = "3"

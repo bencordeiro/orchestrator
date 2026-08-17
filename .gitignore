@@ -14,15 +14,39 @@ data/
 .vscode/
 *.pdb
 
+# Local AI-assistant instructions, settings, and working notes
+.claude/
+.codex/
+.agents/
+AGENTS.md
+CLAUDE.md
+AI_NOTES.md
+
+# Defensive private-key exclusions
+*.pem
+*.p12
+*.pfx
+id_rsa*
+
 ui/node_modules/
 ui/dist/
 
-# CLIProxyAPI download cache (exe is staged for release by scripts/download-cliproxy.ps1;
-# do not commit the ~47MB binary — CI/release scripts download + checksum it)
+# CLIProxyAPI download cache. The sidecar binaries are ~45-47MB each and are
+# staged for release by scripts/download-cliproxy.ps1 (Windows) or
+# scripts/download-cliproxy.sh (Linux/macOS) — never commit them; CI and the
+# release scripts download + checksum them from the pin in VERSION.txt.
 src-tauri/binaries/extract/
-src-tauri/binaries/*.zip
 src-tauri/binaries/test-cfg/
+src-tauri/binaries/*.zip
+src-tauri/binaries/*.tar.gz
 src-tauri/binaries/*.exe
+# Staged sidecars, both the legacy upstream name and the namespaced name we
+# now stage as. Linux/macOS binaries carry no extension: the plain name plus
+# the target-triple copy that Tauri's externalBin resolves at bundle time.
+src-tauri/binaries/cli-proxy-api
+src-tauri/binaries/cli-proxy-api-*
+src-tauri/binaries/orchestrator-cli-proxy-api
+src-tauri/binaries/orchestrator-cli-proxy-api-*
 !src-tauri/binaries/VERSION.txt
 
 # Updater private key — NEVER commit

@@ -65,14 +65,60 @@ pub fn run() {
         log_dir.display()
     );
 
-    // Bootstrap orchestrator + MCP on a multi-thread runtime before Tauri starts.
-    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let app_state = rt
-        .block_on(AppState::bootstrap(config_path))
-        .expect("bootstrap orchestrator");
+    // Runtime for the MCP server + sidecar tasks. Created here, but nothing is
+    // bootstrapped yet — see the `.setup()` hook below.
+    let rt = Arc::new(tokio::runtime::Runtime::new().expect("tokio runtime"));
+    let rt_for_setup = rt.clone();
 
-    // Keep the runtime alive for the MCP server task.
-    let _rt_guard = Arc::new(rt);
+    // The signal handler is armed BEFORE bootstrap, not after, and reads the
+    // sidecar out of this slot when a signal actually arrives.
+    //
+    // Arming it after bootstrap left a real ~1s window: the sidecar is spawned
+    // *during* bootstrap, so a SIGTERM in that window hit the default
+    // disposition, killed the app instantly, and orphaned the sidecar holding
+    // its port. Not theoretical — release.sh's smoke test kills as soon as
+    // /health answers and reproduced it.
+    let sidecar_slot: state::SidecarSlot = Arc::new(std::sync::Mutex::new(None));
+    let sidecar_slot_for_bootstrap = sidecar_slot.clone();
+
+    #[cfg(unix)]
+    {
+        let slot = sidecar_slot.clone();
+        rt.spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = match signal(SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("SIGTERM handler unavailable: {e}");
+                    return;
+                }
+            };
+            let mut sigint = match signal(SignalKind::interrupt()) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("SIGINT handler unavailable: {e}");
+                    return;
+                }
+            };
+            let sig = tokio::select! {
+                _ = sigterm.recv() => "SIGTERM",
+                _ = sigint.recv() => "SIGINT",
+            };
+            // Clone out of the guard before awaiting so the future stays Send.
+            let sidecar = slot.lock().unwrap().clone();
+            match sidecar {
+                Some(sc) => {
+                    tracing::info!("{sig} received; stopping CLIProxyAPI sidecar before exit");
+                    if let Err(e) = sc.stop().await {
+                        tracing::warn!("sidecar stop on {sig} failed: {e:#}");
+                    }
+                }
+                // Signalled before bootstrap finished: nothing spawned yet.
+                None => tracing::info!("{sig} received before startup completed; exiting"),
+            }
+            std::process::exit(0);
+        });
+    }
 
     tauri::Builder::default()
         // Second launch focuses the existing window instead of silently dying
@@ -91,8 +137,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .manage(app_state)
-        .manage(_rt_guard)
+        .manage(rt)
         .invoke_handler(tauri::generate_handler![
             commands::get_server_info,
             commands::get_slot_board,
@@ -126,7 +171,25 @@ pub fn run() {
             commands::check_for_updates,
             commands::install_update,
         ])
-        .setup(|app| {
+        .setup(move |app| {
+            // Bootstrap happens HERE, not before `Builder`, so that a second
+            // launch never does it. Plugin init runs before this hook, and the
+            // single-instance plugin terminates a duplicate during its init —
+            // so only the primary instance reaches this point. Bootstrapping
+            // earlier meant a duplicate launch would bind (and fail on) the MCP
+            // port, autostart the sidecar, and rewrite shared cliproxy settings
+            // before being told to go away.
+            let app_state = rt_for_setup
+                .block_on(AppState::bootstrap(
+                    config_path,
+                    Some(sidecar_slot_for_bootstrap),
+                ))
+                .map_err(|e| -> Box<dyn std::error::Error> {
+                    format!("failed to start Orchestrator: {e:#}").into()
+                })?;
+
+            app.manage(app_state);
+
             setup_tray(app.handle())?;
             // Wire tray notifications for worker-unavailable (MCP thread → GUI).
             if let Some(state) = app.try_state::<AppState>() {

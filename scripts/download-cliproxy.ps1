@@ -1,6 +1,14 @@
 # Download and extract the pinned CLIProxyAPI Windows x64 sidecar.
 # Pin + checksum: src-tauri/binaries/VERSION.txt
-# Also stages the Tauri externalBin name: cli-proxy-api-x86_64-pc-windows-msvc.exe
+#
+# Stages two names (mirrors scripts/download-cliproxy.sh):
+#   orchestrator-cli-proxy-api.exe                            dev-layout lookup
+#   orchestrator-cli-proxy-api-x86_64-pc-windows-msvc.exe     Tauri externalBin
+#
+# The staged name is namespaced so the Linux .deb does not drop a generic
+# `cli-proxy-api` into /usr/bin; Windows uses the same name purely to keep the
+# two platforms identical. The name inside the upstream zip is still
+# cli-proxy-api.exe — this script renames it while staging.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
 $binDir = Join-Path $repo "src-tauri\binaries"
@@ -21,8 +29,11 @@ $expected = $expected.ToLower()
 
 $zipName = Split-Path $url -Leaf
 $zip = Join-Path $binDir $zipName
-$destExe = Join-Path $binDir "cli-proxy-api.exe"
-$destTriple = Join-Path $binDir "cli-proxy-api-x86_64-pc-windows-msvc.exe"
+# Namespaced staging name (see header). Keep in sync with SIDECAR_BIN in
+# src-tauri/src/sidecar/config.rs and externalBin in tauri.conf.json.
+$stagedName = "orchestrator-cli-proxy-api"
+$destExe = Join-Path $binDir "$stagedName.exe"
+$destTriple = Join-Path $binDir "$stagedName-x86_64-pc-windows-msvc.exe"
 
 # Reuse existing verified zip if present
 if (Test-Path $zip) {

@@ -1,0 +1,35 @@
+# Cross-platform line-ending policy.
+#
+# Without this, Git for Windows (core.autocrlf=true by default) checks the
+# shell scripts out with CRLF, and they then fail on Linux and in CI with
+# "bad interpreter: /usr/bin/env bash^M". Pinning eol per file type keeps one
+# repo buildable from both OSes and stops whole-file CRLF churn in diffs.
+
+# Normalize everything to LF in the repository by default.
+* text=auto eol=lf
+
+# Shell scripts MUST be LF even when checked out on Windows (WSL, Git Bash,
+# and CI all execute them).
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# PowerShell stays CRLF: Windows PowerShell 5.1 is happiest with it.
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+# The sidecar pin is parsed by `while read` in download-cliproxy.sh — keep LF.
+src-tauri/binaries/VERSION.txt text eol=lf
+
+# Binary assets: never touch, never diff as text.
+*.png  binary
+*.ico  binary
+*.icns binary
+*.gif  binary
+*.zip  binary
+*.tar.gz binary
+*.exe  binary
+*.msi  binary
+*.deb  binary
+*.AppImage binary

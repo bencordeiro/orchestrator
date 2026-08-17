@@ -182,37 +182,64 @@ debug: false
     }
 }
 
+/// Plain sidecar filename on the host platform.
+///
+/// This is the name Tauri leaves next to the app executable once it strips the
+/// target-triple suffix at install time.
+///
+/// Deliberately namespaced rather than the upstream `cli-proxy-api`: the Debian
+/// package installs `externalBin` into `/usr/bin`, and a generic name there
+/// would collide with (or silently shadow) a user's own CLIProxyAPI install.
+/// The name *inside* the upstream release archive is still `cli-proxy-api` —
+/// the download scripts rename it while staging.
+#[cfg(windows)]
+pub const SIDECAR_BIN: &str = "orchestrator-cli-proxy-api.exe";
+#[cfg(not(windows))]
+pub const SIDECAR_BIN: &str = "orchestrator-cli-proxy-api";
+
+/// The `externalBin` filename Tauri stages at bundle time: `<name>-<triple>`
+/// (plus `.exe` on Windows). The triple comes from `build.rs`, so this stays
+/// correct when cross-compiling or building for aarch64.
+pub fn sidecar_bin_triple() -> String {
+    let triple = env!("ORCHESTRATOR_TARGET_TRIPLE");
+    if cfg!(windows) {
+        format!("orchestrator-cli-proxy-api-{triple}.exe")
+    } else {
+        format!("orchestrator-cli-proxy-api-{triple}")
+    }
+}
+
 /// Locate the sidecar binary. Override with `ORCHESTRATOR_CLIPROXY_BIN`.
 ///
-/// Production (Tauri `externalBin`): binary sits next to the app executable as
-/// `cli-proxy-api.exe` after the target-triple suffix is stripped at install time.
+/// Production (Tauri `externalBin`): binary sits next to the app executable
+/// under [`SIDECAR_BIN`] after the target-triple suffix is stripped at install
+/// time. Dev layouts additionally check the repo `binaries/` directories, where
+/// `scripts/download-cliproxy.{sh,ps1}` stage both names.
 pub fn resolve_binary_path() -> Result<PathBuf> {
     if let Ok(p) = std::env::var("ORCHESTRATOR_CLIPROXY_BIN") {
         return Ok(PathBuf::from(p));
     }
 
-    let triple = "cli-proxy-api-x86_64-pc-windows-msvc.exe";
+    let triple = sidecar_bin_triple();
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             // Installed / release layout (externalBin)
-            candidates.push(dir.join("cli-proxy-api.exe"));
-            candidates.push(dir.join(triple));
-            candidates.push(dir.join("binaries").join("cli-proxy-api.exe"));
-            candidates.push(dir.join("binaries").join(triple));
+            candidates.push(dir.join(SIDECAR_BIN));
+            candidates.push(dir.join(&triple));
+            candidates.push(dir.join("binaries").join(SIDECAR_BIN));
+            candidates.push(dir.join("binaries").join(&triple));
         }
     }
 
     // Dev layouts
-    candidates.push(PathBuf::from("src-tauri/binaries/cli-proxy-api.exe"));
-    candidates.push(PathBuf::from("src-tauri/binaries").join(triple));
-    candidates.push(PathBuf::from("binaries/cli-proxy-api.exe"));
-    candidates.push(PathBuf::from("binaries").join(triple));
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/cli-proxy-api.exe"),
-    );
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(triple));
+    candidates.push(PathBuf::from("src-tauri/binaries").join(SIDECAR_BIN));
+    candidates.push(PathBuf::from("src-tauri/binaries").join(&triple));
+    candidates.push(PathBuf::from("binaries").join(SIDECAR_BIN));
+    candidates.push(PathBuf::from("binaries").join(&triple));
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(SIDECAR_BIN));
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(&triple));
 
     for c in candidates {
         if !c.as_os_str().is_empty() && c.exists() {
@@ -220,7 +247,7 @@ pub fn resolve_binary_path() -> Result<PathBuf> {
         }
     }
     // Expected path for error messages when missing.
-    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/cli-proxy-api.exe"))
+    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(SIDECAR_BIN))
 }
 
 #[cfg(test)]

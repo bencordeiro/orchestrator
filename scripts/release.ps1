@@ -63,7 +63,7 @@ if (-not $SkipDownload) {
   Write-Host "Skipping sidecar download (-SkipDownload)" -ForegroundColor Yellow
 }
 
-$triple = Join-Path $RepoRoot "src-tauri\binaries\cli-proxy-api-x86_64-pc-windows-msvc.exe"
+$triple = Join-Path $RepoRoot "src-tauri\binaries\orchestrator-cli-proxy-api-x86_64-pc-windows-msvc.exe"
 if (-not (Test-Path $triple)) {
   throw "Missing sidecar for bundling: $triple - run download-cliproxy.ps1"
 }

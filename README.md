@@ -11,9 +11,7 @@ Claude Code / Codex  --MCP HTTP-->  Orchestrator (tray)  --OpenAI/Anthropic-->  
                                     Ollama · API keys · CLIProxyAPI subscriptions
 ```
 
-![Demo placeholder](docs/demo.gif)
-
-*Add a short screen recording as `docs/demo.gif` before public launch.*
+![Orchestrator slot management interface](docs/orchestrator-ui.png)
 
 ## Features
 
@@ -24,13 +22,13 @@ Claude Code / Codex  --MCP HTTP-->  Orchestrator (tray)  --OpenAI/Anthropic-->  
 - **Backends:** any OpenAI-compatible URL (Ollama, proxies, …) + native Anthropic — see [docs/BACKENDS.md](docs/BACKENDS.md) for recipes (z.ai coding plan, Ollama, API keys)
 - **Agent onboarding:** copy-paste setup + usage prompt for any MCP client — [AGENT_SETUP.md](AGENT_SETUP.md)
 - **Optional CLIProxyAPI sidecar** for subscription OAuth → local OpenAI-compatible API
-- **Tray app** (Windows): slot board, accounts, Ollama discovery, usage log, manual update check
+- **Tray app** (Windows + Linux): slot board, accounts, Ollama discovery, usage log, manual update check
 
 ## Quick start (Windows)
 
 ### Installer (release)
 
-1. Download the latest **NSIS** installer from [GitHub Releases](https://github.com/YOUR_GITHUB_USER/orchestrator/releases).
+1. Download the latest **NSIS** installer from [GitHub Releases](https://github.com/bencordeiro/orchestrator/releases).
 2. Install and launch **Orchestrator** (tray icon appears; config + bearer token auto-created on first run).
 3. Connect a backend:
    - **Ollama:** Local models → Discover → Create profile → assign to `worker`
@@ -48,7 +46,7 @@ claude mcp add --transport http orchestrator http://localhost:7420/mcp `
 ### From source (dev)
 
 ```powershell
-git clone https://github.com/YOUR_GITHUB_USER/orchestrator.git
+git clone https://github.com/bencordeiro/orchestrator.git
 cd orchestrator
 powershell -File scripts\download-cliproxy.ps1   # optional, for subscription sidecar
 cd ui; npm install; cd ..
@@ -66,6 +64,58 @@ powershell -ExecutionPolicy Bypass -File scripts\release.ps1
 ```
 
 Installers land under `src-tauri\target\release\bundle\`.
+
+## Quick start (Linux)
+
+Packages: **`.deb`** (Debian/Ubuntu/Pop!_OS) and **`.AppImage`** (any distro).
+Only the AppImage supports the in-app updater — Tauri cannot update a `.deb`.
+
+```bash
+sudo apt install ./Orchestrator_<version>_amd64.deb
+# or
+chmod +x Orchestrator_<version>_amd64.AppImage && ./Orchestrator_<version>_amd64.AppImage
+```
+
+Then connect a backend and copy the MCP setup command from **Settings →
+Connect your agents**, exactly as on Windows.
+
+> **Tray icon:** Orchestrator lives in the tray. GNOME needs the
+> [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/);
+> on COSMIC enable the tray applet in panel settings. Without a tray host the
+> app still runs and serves MCP — closing the window hides it, and relaunching
+> brings it back.
+
+### From source (dev)
+
+Build prerequisites (Ubuntu/Debian/Pop!_OS — the Tauri v2 set, plus
+`libdbus-1-dev` for the Secret Service keyring backend):
+
+```bash
+sudo apt update && sudo apt install -y \
+  libwebkit2gtk-4.1-dev libssl-dev librsvg2-dev \
+  libxdo-dev libayatana-appindicator3-dev libdbus-1-dev
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+```bash
+git clone https://github.com/bencordeiro/orchestrator.git
+cd orchestrator
+./scripts/download-cliproxy.sh    # optional, for subscription sidecar
+(cd ui && npm ci)
+cargo test
+# GUI:
+(cd ui && npm run tauri dev)
+# Headless MCP only:
+cargo run -- serve
+```
+
+**One-command release build** (tests + UI + deb/AppImage):
+
+```bash
+./scripts/release.sh
+```
+
+Packages land under `src-tauri/target/release/bundle/`.
 
 ## Slots & continuity
 
@@ -100,11 +150,19 @@ Orchestrator does **not** hide this:
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/download-cliproxy.ps1` | Download pinned CLIProxyAPI (checksummed) for Windows x64 |
+| `scripts/download-cliproxy.ps1` | Download pinned CLIProxyAPI (checksummed), Windows x64 |
+| `scripts/download-cliproxy.sh` | Download pinned CLIProxyAPI (checksummed), Linux/macOS |
 | `scripts/release.ps1` | Full test + UI build + Tauri NSIS/MSI + optional `/health` smoke |
-| `.github/workflows/ci.yml` | Test on push; release artifacts on tag |
+| `scripts/release.sh` | Full test + UI build + Tauri deb/AppImage + optional `/health` smoke |
+| `.github/workflows/ci.yml` | Test on push (Windows + Linux matrix); release artifacts on tag |
 
-**Future platforms:** Linux/macOS installers are not in v1; sidecar download URLs for those OSes are listed in `src-tauri/binaries/VERSION.txt`.
+The sidecar pin and per-platform checksums live in
+`src-tauri/binaries/VERSION.txt`. Both download scripts read it, so adding a
+target is a data change — append a `<platform>_url` / `_sha256` / `_binary` /
+`_triple` group, no script edits.
+
+**Future platforms:** macOS is not built yet (needs a Gatekeeper/signing
+decision); the sidecar ships darwin builds upstream, so it is mostly packaging.
 
 ## License
 

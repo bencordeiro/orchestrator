@@ -89,3 +89,17 @@ of worker models you can delegate tasks to. Use it like this:
   backend in the app (Slots tab) and delegate again — same session keeps working.
 - Prompt the current worker directly (bypassing MCP) to isolate backend issues:
   `powershell -File scripts\test-worker.ps1 "say hi"`.
+- Server not reachable at all → check the app is running and listening:
+  `curl http://localhost:7420/health` should print `ok`.
+
+### Linux notes
+
+- **The app lives in the tray.** GNOME needs the
+  [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/);
+  COSMIC needs the tray applet enabled in panel settings. Without a tray host
+  the app still runs and serves MCP — closing the window only hides it, and
+  launching Orchestrator again brings the window back.
+- **Secrets** live in the Secret Service keyring (gnome-keyring / KWallet), so
+  a keyring daemon must be running in your session. Over plain SSH with no
+  session bus there is no keyring: set `ORCHESTRATOR_BEARER_TOKEN` instead.
+- **Logs** are at `~/.config/orchestrator/logs/` (Settings → Open logs folder).
