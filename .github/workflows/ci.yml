@@ -62,6 +62,17 @@ jobs:
       - name: Core tests
         run: cargo test
 
+      # Tauri validates externalBin paths even for `cargo test`, so stage the
+      # same checksummed sidecar that the release build embeds.
+      - name: Download CLIProxyAPI sidecar (checksummed)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: ./scripts/download-cliproxy.ps1
+
+      - name: Download CLIProxyAPI sidecar (checksummed)
+        if: matrix.name == 'linux'
+        run: ./scripts/download-cliproxy.sh
+
       - name: Tauri crate tests
         working-directory: src-tauri
         run: cargo test
