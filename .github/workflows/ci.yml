@@ -62,10 +62,19 @@ jobs:
       - name: Core tests
         run: cargo test
 
-      - name: Tauri crate tests
-        working-directory: src-tauri
-        run: cargo test
+      # Tauri validates externalBin paths even for `cargo test`, so stage the
+      # same checksummed sidecar that the release build embeds.
+      - name: Download CLIProxyAPI sidecar (checksummed)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: ./scripts/download-cliproxy.ps1
 
+      - name: Download CLIProxyAPI sidecar (checksummed)
+        if: matrix.name == 'linux'
+        run: ./scripts/download-cliproxy.sh
+
+      # Tauri's generate_context! validates frontendDist at compile time, so
+      # the UI must be built before the crate tests.
       - name: UI install
         working-directory: ui
         run: npm ci
@@ -73,6 +82,10 @@ jobs:
       - name: UI build
         working-directory: ui
         run: npm run build
+
+      - name: Tauri crate tests
+        working-directory: src-tauri
+        run: cargo test
 
   release:
     name: release-${{ matrix.name }}
@@ -136,6 +149,12 @@ jobs:
       - name: Install UI deps
         working-directory: ui
         run: npm ci
+
+      # beforeBuildCommand is empty, so build the UI explicitly; Tauri's
+      # generate_context! panics if frontendDist does not exist.
+      - name: Build UI
+        working-directory: ui
+        run: npm run build
 
       - name: Tauri build
         env:
