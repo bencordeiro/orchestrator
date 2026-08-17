@@ -52,9 +52,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJENjczRkYyMUNFMzQ3Q0EKUldUS1IrTWM4ajludlNndTNvZ2FCMzY1RnkyM0RNd3RXVHlkZy9FaHRqZm1TSFJVTS9DYjQyOUkK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM5Q0M2OTY0OTA0MzI4NEUKUldST0tFT1FaR25NeVVKVDQzU3hUMVpPUFYrdTZMdEMyMzNRQlpsVTNQVzNBc05KL2EyaU9WbVoK",
       "endpoints": [
-        "https://github.com/YOUR_GITHUB_USER/orchestrator/releases/latest/download/latest.json"
+        "https://github.com/bencordeiro/orchestrator/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
