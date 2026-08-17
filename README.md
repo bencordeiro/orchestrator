@@ -1,6 +1,6 @@
 # Orchestrator
 
-**Hot-swappable worker slots for any MCP client** (Claude Code, Codex CLI, and friends).
+**Hot-swappable worker slots for any MCP client** (Claude Code, Codex CLI, and other).
 
 Your main agent keeps one stable tool — `delegate` — while **you** decide which model/backend sits behind the `worker` (or `reviewer`, …) slot. Swap backends mid-session from a tray app **without** restarting MCP and **without** the main model needing to know the vendor.
 
